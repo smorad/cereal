@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from cyreal import (
-    ArraySampleSource,
+    ArraySource,
     BatchTransform,
     DataLoader,
     DevicePutTransform,
@@ -62,7 +62,7 @@ def fake_mnist_cache(tmp_path, monkeypatch):
 def test_readme_quickstart_example_runs():
     train_data = MNISTDataset(split="train").as_array_dict()
     pipeline = [
-        ArraySampleSource(train_data, ordering="shuffle"),
+        ArraySource(train_data, ordering="shuffle"),
         BatchTransform(batch_size=128),
         DevicePutTransform(),
     ]
@@ -79,7 +79,7 @@ def test_readme_quickstart_example_runs():
 def test_readme_scan_example_runs():
     train_data = MNISTDataset(split="train").as_array_dict()
     pipeline = [
-        ArraySampleSource(train_data, ordering="shuffle"),
+        ArraySource(train_data, ordering="shuffle"),
         BatchTransform(batch_size=128),
         DevicePutTransform(),
     ]
@@ -108,7 +108,7 @@ def test_readme_scan_example_runs():
 def test_readme_manual_jit_example_runs():
     train_data = MNISTDataset(split="train").as_array_dict()
     pipeline = [
-        ArraySampleSource(train_data, ordering="shuffle"),
+        ArraySource(train_data, ordering="shuffle"),
         BatchTransform(batch_size=128),
         DevicePutTransform(),
     ]
@@ -170,7 +170,7 @@ def test_readme_host_callback_example_runs(capsys):
 
     loader = DataLoader(
         pipeline=[
-            ArraySampleSource(train_data, ordering="shuffle"),
+            ArraySource(train_data, ordering="shuffle"),
             BatchTransform(batch_size=128),
             HostCallbackTransform(fn=log_loss),
         ],
