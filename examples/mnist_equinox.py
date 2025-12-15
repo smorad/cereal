@@ -16,7 +16,7 @@ import jax.numpy as jnp
 import optax
 import tqdm
 
-from cyreal import ArraySampleSource, BatchTransform, DataLoader, DevicePutTransform, MNISTDataset, FlattenTransform
+from cyreal import ArraySource, BatchTransform, DataLoader, DevicePutTransform, MNISTDataset, FlattenTransform
 
 Batch = dict[str, jax.Array]
 
@@ -34,14 +34,14 @@ def build_loader(batch_size: int) -> Tuple[DataLoader, DataLoader]:
     train_data = MNISTDataset(split="train").as_array_dict()
     test_data = MNISTDataset(split="test").as_array_dict()
     pipeline = [
-        ArraySampleSource(train_data, ordering="shuffle"),
+        ArraySource(train_data, ordering="shuffle"),
         BatchTransform(batch_size=batch_size),
         FlattenTransform(data_key="image"),
         DevicePutTransform(),
     ]
     loader = DataLoader(pipeline=pipeline)
     test_pipeline = [
-        ArraySampleSource(test_data, ordering="sequential"),
+        ArraySource(test_data, ordering="sequential"),
         BatchTransform(batch_size=test_data["image"].shape[0]),
         FlattenTransform(data_key="image"),
         DevicePutTransform(),

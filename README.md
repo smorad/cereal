@@ -19,7 +19,7 @@ import jax
 import jax.numpy as jnp
 
 from cyreal import (
-  ArraySampleSource,
+  ArraySource,
   BatchTransform,
   DataLoader,
   DevicePutTransform,
@@ -28,7 +28,7 @@ from cyreal import (
 
 train_data = MNISTDataset(split="train").as_array_dict()
 pipeline = [
-  ArraySampleSource(train_data, ordering="shuffle"),
+  ArraySource(train_data, ordering="shuffle"),
   BatchTransform(batch_size=128),
   DevicePutTransform(),
 ]
@@ -67,7 +67,7 @@ import jax
 import jax.numpy as jnp
 
 from cyreal import (
-  ArraySampleSource,
+  ArraySource,
   BatchTransform,
   DataLoader,
   DevicePutTransform,
@@ -76,7 +76,7 @@ from cyreal import (
 
 train_data = MNISTDataset(split="train").as_array_dict()
 pipeline = [
-  ArraySampleSource(train_data, ordering="shuffle"),
+  ArraySource(train_data, ordering="shuffle"),
   BatchTransform(batch_size=128),
   DevicePutTransform(),
 ]
@@ -132,7 +132,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from cyreal import (
-  ArraySampleSource,
+  ArraySource,
   BatchTransform,
   DataLoader,
   HostCallbackTransform,
@@ -154,7 +154,7 @@ def log_loss(batch, mask):
 
 loader = DataLoader(
   pipeline=[
-    ArraySampleSource(MNISTDataset(split="train").as_array_dict(), ordering="shuffle"),
+    ArraySource(MNISTDataset(split="train").as_array_dict(), ordering="shuffle"),
     BatchTransform(batch_size=128),
     HostCallbackTransform(fn=log_loss),
   ],
@@ -182,7 +182,6 @@ env = gymnax.environments.classic_control.cartpole.CartPole()
 env_params = env.default_params
 
 def policy_step(obs, policy_state, new_episode, key):
-    del new_episode
     logits = obs @ policy_state["params"]
     action = jax.random.categorical(key, logits=logits)
     return action, policy_state
@@ -201,7 +200,7 @@ source = GymnaxSource(
 )
 pipeline = [
     source,
-    BatchTransform(batch_size=16, drop_last=True),
+    BatchTransform(batch_size=16),
 ]
 loader = DataLoader(pipeline)
 state = loader.init_state(jax.random.PRNGKey(0))

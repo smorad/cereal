@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from cyreal import (
-    ArraySampleSource,
+    ArraySource,
     BatchTransform,
     DataLoader,
     DevicePutTransform,
@@ -27,7 +27,7 @@ def test_next_padding_and_epoch_reset():
     data = {
         "inputs": jnp.arange(5, dtype=jnp.float32).reshape(5, 1),
     }
-    source = ArraySampleSource(data=data, ordering="sequential")
+    source = ArraySource(data=data, ordering="sequential")
     pipeline = BatchTransform(
         batch_size=3,
         pad_last_batch=True,
@@ -51,7 +51,7 @@ def test_batch_transform_and_device_put_applied():
     data = {"inputs": jnp.arange(4, dtype=jnp.float32).reshape(4, 1)}
     target_device = jax.devices()[0]
 
-    source = ArraySampleSource(data=data, ordering="sequential")
+    source = ArraySource(data=data, ordering="sequential")
     pipeline = BatchTransform(
         batch_size=2,
         drop_last=True,
@@ -78,7 +78,7 @@ def test_manual_pipeline_composition_without_operator_overloads():
         del mask
         return {"inputs": batch["inputs"] + 1.0}
 
-    source = ArraySampleSource(data=data, ordering="sequential")
+    source = ArraySource(data=data, ordering="sequential")
     pipeline = BatchTransform(batch_size=2)(source)
     pipeline = MapTransform(fn=add_one)(pipeline)
 
@@ -100,7 +100,7 @@ def test_dataloader_accepts_pipeline_sequence():
         return {"inputs": batch["inputs"] + 2.0}
 
     stages = [
-        ArraySampleSource(data=data, ordering="sequential"),
+        ArraySource(data=data, ordering="sequential"),
         BatchTransform(batch_size=2),
         MapTransform(fn=add_two),
     ]
@@ -116,7 +116,7 @@ def test_dataloader_accepts_pipeline_sequence():
 
 def test_dataloader_next_is_jittable():
     data = {"inputs": jnp.arange(6, dtype=jnp.float32).reshape(6, 1)}
-    source = ArraySampleSource(data=data, ordering="sequential")
+    source = ArraySource(data=data, ordering="sequential")
     pipeline = BatchTransform(
         batch_size=2,
         pad_last_batch=True,
@@ -143,7 +143,7 @@ def test_dataloader_next_is_jittable():
 
 def test_loader_iterate_returns_python_iterator():
     data = {"inputs": jnp.arange(4, dtype=jnp.float32).reshape(4, 1)}
-    source = ArraySampleSource(data=data, ordering="sequential")
+    source = ArraySource(data=data, ordering="sequential")
     pipeline = BatchTransform(batch_size=2, drop_last=False)(source)
     loader = DataLoader(pipeline=pipeline)
 
@@ -194,7 +194,7 @@ def test_loader_iterate_returns_python_iterator():
 
 def test_scan_epoch_supports_multiple_epochs():
     data = {"inputs": jnp.arange(6, dtype=jnp.float32).reshape(6, 1)}
-    source = ArraySampleSource(data=data, ordering="sequential")
+    source = ArraySource(data=data, ordering="sequential")
     pipeline = BatchTransform(batch_size=3, pad_last_batch=True, drop_last=False)(source)
     loader = DataLoader(pipeline=pipeline)
 
@@ -220,7 +220,7 @@ def test_non_jittable_transform_runs_under_jit():
         del mask
         calls.append(float(np.sum(batch["inputs"])))
 
-    source = ArraySampleSource(data=data, ordering="sequential")
+    source = ArraySource(data=data, ordering="sequential")
     pipeline = BatchTransform(
         batch_size=2,
         drop_last=True,
@@ -248,7 +248,7 @@ def test_non_jittable_transform_can_modify_batch():
         updated["inputs"] = batch["inputs"] + 5.0
         return updated
 
-    source = ArraySampleSource(data=data, ordering="sequential")
+    source = ArraySource(data=data, ordering="sequential")
     pipeline = BatchTransform(
         batch_size=2,
         drop_last=True,
@@ -283,7 +283,7 @@ def test_host_callback_transform_interleaves_with_map_transforms():
         del mask
         return {"inputs": batch["inputs"] * 2.0}
 
-    source = ArraySampleSource(data=data, ordering="sequential")
+    source = ArraySource(data=data, ordering="sequential")
     pipeline = BatchTransform(
         batch_size=2,
         drop_last=True,
@@ -386,7 +386,7 @@ def test_time_series_batch_transform_batched_mode_adds_feature_axis():
     contexts = contexts.reshape(num_samples, context_length)
     data = {"context": contexts}
 
-    source = ArraySampleSource(data=data, ordering="sequential")
+    source = ArraySource(data=data, ordering="sequential")
     pipeline = BatchTransform(batch_size=2)(source)
     pipeline = TimeSeriesBatchTransform(mode="batched")(pipeline)
 
@@ -408,7 +408,7 @@ def test_time_series_batch_transform_packed_mode_marks_sequence_boundaries():
     contexts = contexts.reshape(num_samples, context_length)
     data = {"context": contexts}
 
-    source = ArraySampleSource(data=data, ordering="sequential")
+    source = ArraySource(data=data, ordering="sequential")
     pipeline = BatchTransform(batch_size=2)(source)
     pipeline = TimeSeriesBatchTransform(mode="packed")(pipeline)
 
@@ -449,7 +449,7 @@ def test_mnist_image_transforms_normalize_and_flatten():
         "label": jnp.array([0, 1], dtype=jnp.int32),
     }
 
-    source: Source = ArraySampleSource(
+    source: Source = ArraySource(
         data=data,
         ordering="sequential",
     )

@@ -93,7 +93,7 @@ class DiskSourceState:
 
 
 @dataclass
-class ArraySampleSource:
+class ArraySource:
     """Sample-level stream over an in-memory PyTree of arrays.
     
     This loads the entire dataset into memory as a PyTree of JAX arrays. 
