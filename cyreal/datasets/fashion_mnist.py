@@ -11,7 +11,7 @@ import numpy as np
 
 from ..dataset_protocol import DatasetProtocol
 from ..sources import DiskSampleSource
-from .fs_utils import (
+from .utils import (
     ensure_file as _ensure_file,
     resolve_cache_dir,
     to_host_jax_array as _to_host_jax_array,

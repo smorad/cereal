@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import pickle
-import tarfile
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -14,25 +12,14 @@ import numpy as np
 
 from ..dataset_protocol import DatasetProtocol
 from ..sources import DiskSampleSource
-from .fs_utils import resolve_cache_dir, to_host_jax_array as _to_host_jax_array
+from .utils import (
+    download_archive,
+    ensure_tar_extracted,
+    resolve_cache_dir,
+    to_host_jax_array as _to_host_jax_array,
+)
 
 CIFAR10_URL = "https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz"
-
-def _download(url: str, path: Path) -> Path:
-    if path.exists():
-        return path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    urllib.request.urlretrieve(url, path)
-    return path
-
-
-def _ensure_extracted(archive: Path, extract_root: Path) -> Path:
-    target = extract_root / "cifar-10-batches-py"
-    if target.exists():
-        return target
-    with tarfile.open(archive, "r:gz") as tar:
-        tar.extractall(path=extract_root)
-    return target
 
 
 def _batch_names(split: Literal["train", "test"]) -> list[str]:
@@ -60,7 +47,6 @@ def _load_split_numpy(split: Literal["train", "test"], extract_dir: Path) -> tup
     labels_np = np.concatenate(labels, axis=0)
     return images_np, labels_np
 
-
 def _ensure_split_numpy_cache(
     split: Literal["train", "test"],
     base_dir: Path,
@@ -87,8 +73,8 @@ class CIFAR10Dataset(DatasetProtocol):
     def __post_init__(self) -> None:
         base_dir = resolve_cache_dir(self.cache_dir, default_name="cyreal_cifar10")
         archive_path = base_dir / "cifar-10-python.tar.gz"
-        _download(CIFAR10_URL, archive_path)
-        extract_dir = _ensure_extracted(archive_path, base_dir)
+        download_archive(CIFAR10_URL, archive_path)
+        extract_dir = ensure_tar_extracted(archive_path, base_dir, target_dir="cifar-10-batches-py")
 
         images_np, labels_np = _load_split_numpy(self.split, extract_dir)
         self._images = _to_host_jax_array(images_np)
@@ -122,8 +108,8 @@ class CIFAR10Dataset(DatasetProtocol):
     ) -> DiskSampleSource:
         base_dir = resolve_cache_dir(cache_dir, default_name="cyreal_cifar10")
         archive_path = base_dir / "cifar-10-python.tar.gz"
-        _download(CIFAR10_URL, archive_path)
-        extract_dir = _ensure_extracted(archive_path, base_dir)
+        download_archive(CIFAR10_URL, archive_path)
+        extract_dir = ensure_tar_extracted(archive_path, base_dir, target_dir="cifar-10-batches-py")
 
         images_path, labels_path = _ensure_split_numpy_cache(split, base_dir, extract_dir)
         images_memmap = np.load(images_path, mmap_mode="r")

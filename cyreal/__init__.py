@@ -8,7 +8,6 @@ from .datasets import (
     EMNISTDataset,
     FashionMNISTDataset,
     KMNISTDataset,
-    Kuzushiji49Dataset,
     MNISTDataset,
 )
 from .loader import (

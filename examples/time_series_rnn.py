@@ -16,7 +16,7 @@ import optax
 import tqdm
 
 from cyreal import BatchTransform, DataLoader, DevicePutTransform
-from cyreal.datasets.time_series import DailyMinTemperaturesDataset, SunspotsDataset
+from cyreal.datasets import DailyMinTemperaturesDataset, SunspotsDataset
 from cyreal.transforms import TimeSeriesBatchTransform
 
 SequenceBatch = dict[str, jax.Array]
