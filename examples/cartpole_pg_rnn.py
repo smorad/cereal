@@ -47,6 +47,54 @@ class RNNPolicy(eqx.Module):
         return logits, new_hidden
 
 
+class MaskObservationWrapper:
+    """Zeroes selected observation indices after env reset/step."""
+
+    def __init__(self, env: gymnax.environments.environment.Environment, mask_indices: tuple[int, ...]):
+        self.env = env
+        self.mask_indices = tuple(mask_indices)
+
+    def _mask(self, obs: jax.Array) -> jax.Array:
+        if not self.mask_indices:
+            return obs
+        for idx in self.mask_indices:
+            obs = obs.at[idx].set(0.0)
+        return obs
+
+    def reset(self, key, params):
+        obs, state = self.env.reset(key, params)
+        return self._mask(obs), state
+
+    def step(self, key, state, action, params):
+        obs, next_state, reward, done, info = self.env.step(key, state, action, params)
+        return self._mask(obs), next_state, reward, done, info
+
+    def observation_space(self, params):
+        return self.env.observation_space(params)
+
+    def action_space(self, params):
+        return self.env.action_space(params)
+
+    def state_space(self, params):
+        return self.env.state_space(params)
+
+    @property
+    def default_params(self):
+        return self.env.default_params
+
+    def num_actions(self, params):
+        return self.env.num_actions(params)
+
+    def reward(self, state, action, params):
+        return self.env.reward(state, action, params)
+
+    def discount(self, state, action, next_state, params):
+        return self.env.discount(state, action, next_state, params)
+
+    def done(self, state, action, params):
+        return self.env.done(state, action, params)
+
+
 def reward_to_go(rewards: jax.Array, dones: jax.Array, gamma: float) -> jax.Array:
     dones_f = dones.astype(jnp.float32)
 
@@ -63,15 +111,10 @@ def reward_to_go(rewards: jax.Array, dones: jax.Array, gamma: float) -> jax.Arra
     return reversed_returns[::-1]
 
 
-def select_log_probs(logits: jax.Array, actions: jax.Array) -> jax.Array:
-    log_probs = jax.nn.log_softmax(logits, axis=-1)
-    indices = actions.astype(jnp.int32)[..., None]
-    return jnp.take_along_axis(log_probs, indices, axis=-1)[..., 0]
-
-
 def build_env() -> Tuple[gymnax.environments.environment.Environment, Any]:
     base_env = gymnax.environments.classic_control.cartpole.CartPole()
     env = purerl.LogWrapper(base_env)
+    env = MaskObservationWrapper(env, mask_indices=(0, 2))
     return env, env.default_params
 
 
@@ -89,8 +132,24 @@ def summarize_episode_metrics(info_tree: dict[str, jax.Array]) -> tuple[float | 
     return float(jnp.mean(valid_returns)), float(jnp.mean(valid_lengths))
 
 
-def main() -> None:
-    args = parse_args()
+def reset_hidden_if_needed(hidden: jax.Array, new_episode: jax.Array) -> jax.Array:
+    flag = jnp.asarray(new_episode, dtype=jnp.bool_)
+    return jnp.where(flag, jnp.zeros_like(hidden), hidden)
+
+
+def make_policy_state(params: Any, hidden_size: int) -> dict[str, jax.Array]:
+    return {
+        "params": params,
+        "hidden": jnp.zeros(hidden_size, dtype=jnp.float32),
+    }
+
+
+def policy_logits(model: RNNPolicy, hidden: jax.Array, obs: jax.Array, new_episode: jax.Array):
+    hidden = reset_hidden_if_needed(hidden, new_episode)
+    return model(obs, hidden)
+
+
+def train(args: argparse.Namespace) -> None:
     env, env_params = build_env()
 
     rng = jax.random.PRNGKey(args.seed)
@@ -101,26 +160,11 @@ def main() -> None:
 
     policy = RNNPolicy(obs_dim, args.hidden_size, action_dim, key=policy_key)
     policy_params, policy_static = eqx.partition(policy, eqx.is_array)
+    policy_state_template = make_policy_state(policy_params, args.hidden_size)
 
-    def make_policy_state(params):
-        return {
-            "params": params,
-            "hidden": jnp.zeros(args.hidden_size, dtype=jnp.float32),
-        }
-
-    def reset_hidden_if_needed(hidden, new_episode):
-        flag = jnp.asarray(new_episode, dtype=jnp.bool_)
-        return jnp.where(flag, jnp.zeros_like(hidden), hidden)
-
-    def mask_cart_position(obs: jax.Array) -> jax.Array:
-        obs = obs.at[0].set(0.0)
-        obs = obs.at[2].set(0.0)
-        return obs
-
-    def policy_step(obs, policy_state, new_episode, key):
+    def act(obs, policy_state, new_episode, key):
         model = eqx.combine(policy_state["params"], policy_static)
-        hidden = reset_hidden_if_needed(policy_state["hidden"], new_episode)
-        logits, new_hidden = model(mask_cart_position(obs), hidden)
+        logits, new_hidden = policy_logits(model, policy_state["hidden"], obs, new_episode)
         action = jax.random.categorical(key, logits=logits)
         next_state = {
             "params": policy_state["params"],
@@ -128,29 +172,11 @@ def main() -> None:
         }
         return action, next_state
 
-    def train_logits(params, observations, dones):
-        model = eqx.combine(params, policy_static)
-        done_flags = jnp.asarray(dones, dtype=jnp.bool_)
-        new_episode = jnp.concatenate(
-            [jnp.array([True], dtype=jnp.bool_), done_flags[:-1]],
-            axis=0,
-        )
-
-        def step(hidden, inputs):
-            obs, episode_reset = inputs
-            hidden = reset_hidden_if_needed(hidden, episode_reset)
-            logits, new_hidden = model(mask_cart_position(obs), hidden)
-            return new_hidden, logits
-
-        init_hidden = jnp.zeros(args.hidden_size, dtype=jnp.float32)
-        _, logits = jax.lax.scan(step, init_hidden, (observations, new_episode))
-        return logits
-
     source = GymnaxSource(
         env=env,
         env_params=env_params,
-        policy_step_fn=policy_step,
-        policy_state_template=make_policy_state(policy_params),
+        policy_step_fn=act,
+        policy_state_template=policy_state_template,
         steps_per_epoch=args.rollout_length,
     )
     pipeline = [
@@ -159,26 +185,48 @@ def main() -> None:
     ]
     loader = DataLoader(pipeline=pipeline)
     loader_state = loader.init_state(loader_key)
-    loader_state = set_loader_policy_state(loader_state, make_policy_state(policy_params))
+    loader_state = set_loader_policy_state(loader_state, policy_state_template)
 
     optimizer = optax.adamw(args.learning_rate)
     opt_state = optimizer.init(policy_params)
 
     def loss_fn(params, batch):
-        logits = train_logits(params, batch["state"], batch["done"])
-        log_probs = select_log_probs(logits, batch["action"])
+        model = eqx.combine(params, policy_static)
+        done_flags = jnp.asarray(batch["done"], dtype=jnp.bool_)
+        new_episode = jnp.concatenate(
+            [jnp.array([True], dtype=jnp.bool_), done_flags[:-1]],
+            axis=0,
+        )
+
+        def scan_step(hidden, inputs):
+            obs, episode_reset = inputs
+            logits, new_hidden = policy_logits(model, hidden, obs, episode_reset)
+            return new_hidden, logits
+
+        init_hidden = jnp.zeros(args.hidden_size, dtype=jnp.float32)
+        _, logits = jax.lax.scan(scan_step, init_hidden, (batch["state"], new_episode))
+        log_probs = jax.nn.log_softmax(logits, axis=-1)
+        indices = batch["action"].astype(jnp.int32)[..., None]
+        log_probs = jnp.take_along_axis(log_probs, indices, axis=-1)[..., 0]
         returns = reward_to_go(batch["reward"], batch["done"], args.gamma)
         centered = returns - jnp.mean(returns)
         return -jnp.mean(log_probs * centered)
 
-    loss_and_grad = jax.jit(jax.value_and_grad(loss_fn))
+    loss_and_grad = jax.value_and_grad(loss_fn)
+
+    @jax.jit
+    def update(params, opt_state, batch):
+        loss, grads = loss_and_grad(params, batch)
+        updates, opt_state = optimizer.update(grads, opt_state, params)
+        params = optax.apply_updates(params, updates)
+        return params, opt_state, loss
 
     for epoch in tqdm.trange(1, args.epochs + 1):
         batch, loader_state, _ = loader.next(loader_state)
-        loss, grads = loss_and_grad(policy_params, batch)
-        updates, opt_state = optimizer.update(grads, opt_state, params=policy_params)
-        policy_params = optax.apply_updates(policy_params, updates)
-        loader_state = set_loader_policy_state(loader_state, make_policy_state(policy_params))
+        policy_params, opt_state, loss = update(policy_params, opt_state, batch)
+        loader_state = set_loader_policy_state(
+            loader_state, make_policy_state(policy_params, args.hidden_size)
+        )
 
         mean_return, mean_length = summarize_episode_metrics(batch["info"])
         if mean_return is None:
@@ -188,6 +236,11 @@ def main() -> None:
         tqdm.tqdm.write(
             f"Epoch {epoch}: loss={float(loss):.4f}, return={mean_return:.2f}, length={mean_length:.1f}"
         )
+
+
+def main() -> None:
+    args = parse_args()
+    train(args)
 
 
 if __name__ == "__main__":
