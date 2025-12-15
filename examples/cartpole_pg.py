@@ -59,12 +59,6 @@ def reward_to_go(rewards: jax.Array, dones: jax.Array, gamma: float) -> jax.Arra
     return reversed_returns[::-1]
 
 
-def select_log_probs(logits: jax.Array, actions: jax.Array) -> jax.Array:
-    log_probs = jax.nn.log_softmax(logits, axis=-1)
-    indices = actions.astype(jnp.int32)[..., None]
-    return jnp.take_along_axis(log_probs, indices, axis=-1)[..., 0]
-
-
 def build_env() -> Tuple[gymnax.environments.environment.Environment, Any]:
     base_env = gymnax.environments.classic_control.cartpole.CartPole()
     env = purerl.LogWrapper(base_env)
@@ -85,8 +79,11 @@ def summarize_episode_metrics(info_tree: dict[str, jax.Array]) -> tuple[float | 
     return float(jnp.mean(valid_returns)), float(jnp.mean(valid_lengths))
 
 
-def main() -> None:
-    args = parse_args()
+def make_policy_state(params: Any) -> dict[str, Any]:
+    return {"params": params}
+
+
+def train(args: argparse.Namespace) -> None:
     env, env_params = build_env()
 
     rng = jax.random.PRNGKey(args.seed)
@@ -97,25 +94,19 @@ def main() -> None:
 
     policy = PolicyNetwork(obs_dim, args.hidden_size, action_dim, key=policy_key)
     policy_params, policy_static = eqx.partition(policy, eqx.is_array)
+    policy_state_template = make_policy_state(policy_params)
 
-    def make_policy_state(params):
-        return {"params": params}
-
-    def policy_step(obs, policy_state, new_episode, key):
+    def act(obs, policy_state, new_episode, key):
         model = eqx.combine(policy_state["params"], policy_static)
         logits = model(obs)
         action = jax.random.categorical(key, logits=logits)
         return action, policy_state
 
-    def policy_logits(params, observations):
-        model = eqx.combine(params, policy_static)
-        return eqx.filter_vmap(model)(observations)
-
     source = GymnaxSource(
         env=env,
         env_params=env_params,
-        policy_step_fn=policy_step,
-        policy_state_template=make_policy_state(policy_params),
+        policy_step_fn=act,
+        policy_state_template=policy_state_template,
         steps_per_epoch=args.rollout_length,
     )
     pipeline = [
@@ -124,25 +115,31 @@ def main() -> None:
     ]
     loader = DataLoader(pipeline=pipeline)
     loader_state = loader.init_state(loader_key)
-    loader_state = set_loader_policy_state(loader_state, make_policy_state(policy_params))
+    loader_state = set_loader_policy_state(loader_state, policy_state_template)
 
     optimizer = optax.adam(args.learning_rate)
     opt_state = optimizer.init(policy_params)
 
-    def loss_fn(params, batch):
-        logits = policy_logits(params, batch["state"])
-        log_probs = select_log_probs(logits, batch["action"])
-        returns = reward_to_go(batch["reward"], batch["done"], args.gamma)
-        centered = returns - jnp.mean(returns)
-        return -jnp.mean(log_probs * centered)
+    @jax.jit
+    def update(params, opt_state, batch):
+        def loss_fn(params, batch):
+            model = eqx.combine(params, policy_static)
+            logits = eqx.filter_vmap(model)(batch["state"])
+            log_probs = jax.nn.log_softmax(logits, axis=-1)
+            indices = batch["action"].astype(jnp.int32)[..., None]
+            log_probs = jnp.take_along_axis(log_probs, indices, axis=-1)[..., 0]
+            returns = reward_to_go(batch["reward"], batch["done"], args.gamma)
+            centered = returns - jnp.mean(returns)
+            return -jnp.mean(log_probs * centered)
 
-    loss_and_grad = jax.jit(jax.value_and_grad(loss_fn))
+        loss, grads = jax.value_and_grad(loss_fn)(params, batch)
+        updates, opt_state = optimizer.update(grads, opt_state, params)
+        params = optax.apply_updates(params, updates)
+        return params, opt_state, loss
 
     for epoch in tqdm.trange(1, args.epochs + 1):
         batch, loader_state, _ = loader.next(loader_state)
-        loss, grads = loss_and_grad(policy_params, batch)
-        updates, opt_state = optimizer.update(grads, opt_state, params=policy_params)
-        policy_params = optax.apply_updates(policy_params, updates)
+        policy_params, opt_state, loss = update(policy_params, opt_state, batch)
         loader_state = set_loader_policy_state(loader_state, make_policy_state(policy_params))
 
         mean_return, mean_length = summarize_episode_metrics(batch["info"])
@@ -153,6 +150,11 @@ def main() -> None:
         tqdm.tqdm.write(
             f"Epoch {epoch}: loss={float(loss):.4f}, return={mean_return:.2f}, length={mean_length:.1f}"
         )
+
+
+def main() -> None:
+    args = parse_args()
+    train(args)
 
 
 if __name__ == "__main__":
