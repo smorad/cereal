@@ -8,7 +8,6 @@ from .datasets import (
     EMNISTDataset,
     FashionMNISTDataset,
     KMNISTDataset,
-    Kuzushiji49Dataset,
     MNISTDataset,
 )
 from .loader import (
@@ -23,6 +22,7 @@ from .transforms import (
     HostCallbackTransform,
     MapTransform,
     NormalizeImageTransform,
+    TimeSeriesBatchTransform,
 )
 
 __all__ = [
@@ -46,4 +46,5 @@ __all__ = [
     "HostCallbackTransform",
     "MapTransform",
     "NormalizeImageTransform",
+    "TimeSeriesBatchTransform",
 ]

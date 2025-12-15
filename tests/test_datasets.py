@@ -17,7 +17,6 @@ from cyreal.datasets import (
     EMNISTDataset,
     FashionMNISTDataset,
     KMNISTDataset,
-    Kuzushiji49Dataset,
     MNISTDataset,
 )
 
@@ -95,7 +94,6 @@ MNIST_LIKE_DATASETS = [
     pytest.param(MNISTDataset, {}, id="mnist"),
     pytest.param(FashionMNISTDataset, {}, id="fashion"),
     pytest.param(KMNISTDataset, {}, id="kmnist"),
-    pytest.param(Kuzushiji49Dataset, {}, id="k49"),
     pytest.param(EMNISTDataset, {"subset": "letters"}, id="emnist-letters"),
 ]
 

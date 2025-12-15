@@ -18,6 +18,7 @@ from cyreal import (
     MapTransform,
     NormalizeImageTransform,
     Source,
+    TimeSeriesBatchTransform,
 )
 
 
@@ -375,6 +376,64 @@ def test_disk_sample_source_infers_spec_when_missing():
         np.array([[4.0, 5.0]], dtype=np.float32),
     )
     np.testing.assert_array_equal(np.asarray(mask2), np.array([True, False]))
+
+
+def test_time_series_batch_transform_batched_mode_adds_feature_axis():
+    num_samples = 4
+    context_length = 3
+    contexts = jnp.arange(num_samples * context_length, dtype=jnp.float32)
+    contexts = contexts.reshape(num_samples, context_length)
+    data = {"context": contexts}
+
+    source = ArraySampleSource(data=data, ordering="sequential")
+    pipeline = BatchTransform(batch_size=2)(source)
+    pipeline = TimeSeriesBatchTransform(mode="batched")(pipeline)
+
+    state = pipeline.init_state(jax.random.PRNGKey(0))
+    batch, mask, _ = pipeline.next(state)
+
+    assert batch["context"].shape == (2, context_length, 1)
+    np.testing.assert_array_equal(
+        np.asarray(batch["context"][0, :, 0]),
+        np.array([0.0, 1.0, 2.0], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(np.asarray(mask), np.array([True, True]))
+
+
+def test_time_series_batch_transform_packed_mode_marks_sequence_boundaries():
+    num_samples = 3
+    context_length = 2
+    contexts = jnp.arange(num_samples * context_length, dtype=jnp.float32)
+    contexts = contexts.reshape(num_samples, context_length)
+    data = {"context": contexts}
+
+    source = ArraySampleSource(data=data, ordering="sequential")
+    pipeline = BatchTransform(batch_size=2)(source)
+    pipeline = TimeSeriesBatchTransform(mode="packed")(pipeline)
+
+    state = pipeline.init_state(jax.random.PRNGKey(0))
+    batch, mask, state = pipeline.next(state)
+
+    np.testing.assert_array_equal(
+        np.asarray(batch["context"]).ravel(),
+        np.array([0.0, 1.0, 2.0, 3.0], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(batch["sequence_start"]),
+        np.array([True, False, True, False]),
+    )
+    np.testing.assert_array_equal(np.asarray(mask), np.array([True, True, True, True]))
+
+    batch2, mask2, _ = pipeline.next(state)
+    np.testing.assert_array_equal(
+        np.asarray(batch2["context"]).ravel(),
+        np.array([4.0, 5.0, 0.0, 0.0], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(batch2["sequence_start"]),
+        np.array([True, False, False, False]),
+    )
+    np.testing.assert_array_equal(np.asarray(mask2), np.array([True, True, False, False]))
 
 
 def test_mnist_image_transforms_normalize_and_flatten():

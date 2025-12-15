@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol, Sequence
+from typing import Any, Callable, Literal, Protocol, Sequence
 
 import jax
 import jax.numpy as jnp
@@ -196,6 +196,112 @@ class _BatchTransformSource(SourceTransform):
             inner_state=inner_state,
             position_in_epoch=wrapped_position,
         )
+
+
+@dataclass
+class TimeSeriesBatchTransform:
+    """Reshape batched sequences for time-series models.
+
+    Args:
+        sequence_key: Key within the batch mapping that stores time-series tensors.
+        mode: Either ``"batched"`` for (B, T, F) outputs or ``"packed"`` for
+            flattened (B * T, F) representations.
+        sequence_start_key: Key used to store the "new sequence" flags when
+            ``mode="packed"`` is selected.
+    """
+
+    sequence_key: str = "context"
+    mode: Literal["batched", "packed"] = "batched"
+    sequence_start_key: str = "sequence_start"
+
+    def __call__(self, inner: Source) -> Source:
+        return _TimeSeriesBatchTransformSource(
+            inner=inner,
+            sequence_key=self.sequence_key,
+            mode=self.mode,
+            sequence_start_key=self.sequence_start_key,
+        )
+
+
+@dataclass
+class _TimeSeriesBatchTransformSource(SourceTransform):
+    inner: Source
+    sequence_key: str
+    mode: Literal["batched", "packed"]
+    sequence_start_key: str
+
+    def __post_init__(self) -> None:
+        if self.mode not in ("batched", "packed"):
+            raise ValueError("mode must be either 'batched' or 'packed'.")
+
+        self.steps_per_epoch = self.inner.steps_per_epoch
+        spec = self.inner.element_spec()
+        if not isinstance(spec, Mapping):
+            raise TypeError("TimeSeriesBatchTransform expects mapping element specs.")
+        if self.sequence_key not in spec:
+            raise KeyError(f"Key '{self.sequence_key}' missing from element spec.")
+
+        seq_spec = spec[self.sequence_key]
+        if not isinstance(seq_spec, jax.ShapeDtypeStruct):
+            raise TypeError("Sequence key spec must be a jax.ShapeDtypeStruct.")
+        if len(seq_spec.shape) < 2:
+            raise ValueError("Sequence tensors must include batch and time axes.")
+
+        self._batch = int(seq_spec.shape[0])
+        self._time = int(seq_spec.shape[1])
+        feature_shape = seq_spec.shape[2:]
+        if not feature_shape:
+            feature_shape = (1,)
+        self._feature_size = int(np.prod(feature_shape))
+        self._sequence_dtype = seq_spec.dtype
+        self._batched_shape = (self._batch, self._time, self._feature_size)
+        self._packed_shape = (self._batch * self._time, self._feature_size)
+        start = jnp.zeros(self._batch * self._time, dtype=jnp.bool_)
+        start_indices = jnp.arange(0, self._batch * self._time, self._time)
+        self._start_template = start.at[start_indices].set(True)
+
+        updated_spec: dict[str, Any] = dict(spec)
+        if self.mode == "batched":
+            updated_spec[self.sequence_key] = jax.ShapeDtypeStruct(
+                shape=self._batched_shape,
+                dtype=self._sequence_dtype,
+            )
+        else:
+            updated_spec[self.sequence_key] = jax.ShapeDtypeStruct(
+                shape=self._packed_shape,
+                dtype=self._sequence_dtype,
+            )
+            updated_spec[self.sequence_start_key] = jax.ShapeDtypeStruct(
+                shape=(self._batch * self._time,),
+                dtype=jnp.bool_,
+            )
+        self._element_spec = updated_spec
+
+    def element_spec(self) -> PyTree:
+        return self._element_spec
+
+    def init_state(self, key: jax.Array | None = None):
+        return self.inner.init_state(key)
+
+    def _reshape_to_batched(self, sequence: jax.Array) -> jax.Array:
+        return jnp.reshape(sequence, self._batched_shape)
+
+    def next(self, state):
+        batch, mask, inner_state = self.inner.next(state)
+        if self.sequence_key not in batch:
+            raise KeyError(f"Batch is missing '{self.sequence_key}'.")
+
+        batched_sequence = self._reshape_to_batched(batch[self.sequence_key])
+        if self.mode == "batched":
+            updated_batch = _replace_mapping_item(batch, self.sequence_key, batched_sequence)
+            return updated_batch, mask, inner_state
+
+        packed_sequence = jnp.reshape(batched_sequence, self._packed_shape)
+        repeated_mask = jnp.repeat(mask, self._time)
+        sequence_start = self._start_template & repeated_mask
+        updated_batch = _replace_mapping_item(batch, self.sequence_key, packed_sequence)
+        updated_batch = _replace_mapping_item(updated_batch, self.sequence_start_key, sequence_start)
+        return updated_batch, repeated_mask, inner_state
 
 
 @dataclass
