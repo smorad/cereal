@@ -9,6 +9,8 @@ Pure `jax` utilities for iterating over finite datasets without ever touching `t
 The only dependency is `jax`. On GPU machines, install the
 appropriate JAX build for your CUDA version.
 
+`pip install cyreal`
+
 ## Quick start with MNIST
 Write `torch`-style dataloaders without `torch`
 
