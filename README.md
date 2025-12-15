@@ -33,7 +33,7 @@ pipeline = [
   DevicePutTransform(),
 ]
 loader = DataLoader(pipeline=pipeline)
-state = loader.init_state(jax.random.PRNGKey(0))
+state = loader.init_state(jax.random.Key(0))
 
 for batch, mask in loader.iterate(state):
   ...  # train your network!
@@ -81,7 +81,7 @@ pipeline = [
   DevicePutTransform(),
 ]
 loader = DataLoader(pipeline)
-loader_state = loader.init_state(jax.random.PRNGKey(0))
+loader_state = loader.init_state(jax.random.Key(0))
 model_state = model_init()
 
 @jax.jit
@@ -118,7 +118,7 @@ pipeline = [
 ]
 
 loader = DataLoader(pipeline=pipeline)
-state = loader.init_state(jax.random.PRNGKey(0))
+state = loader.init_state(jax.random.Key(0))
 
 for batch, mask in loader.iterate(state):
   ...  # stream without holding the dataset in RAM
@@ -203,7 +203,7 @@ pipeline = [
     BatchTransform(batch_size=16),
 ]
 loader = DataLoader(pipeline)
-state = loader.init_state(jax.random.PRNGKey(0))
+state = loader.init_state(jax.random.Key(0))
 state = set_loader_policy_state(state, policy_state)
 
 # Perform one epoch
