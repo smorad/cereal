@@ -1,5 +1,7 @@
 # Cereal - Another JAX DataLoader 
 
+> `grain` for the corporations, `cereal` for the people
+
 Pure `jax` utilities for iterating over finite datasets without ever touching `torch` or `tensorflow`. Dataloaders support `jax.jit`, `jax.grad`, `jax.lax.scan`, and other function transformations.
 
 ## Installation

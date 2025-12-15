@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, Sequence
 
 import jax
 import jax.numpy as jnp
@@ -443,25 +443,42 @@ class FlattenTransform:
         data_key: Key in the batch mapping corresponding to image tensors."""
 
     data_key: str 
+    start_index: int = 1
 
     def __call__(self, inner: Source) -> Source:
-        return _FlattenTransformSource(inner=inner, data_key=self.data_key)
+        return _FlattenTransformSource(inner=inner, data_key=self.data_key, start_index=self.start_index)
 
 
 @dataclass
 class _FlattenTransformSource(SourceTransform):
-    """Flatten per-sample image tensors."""
+    """Flatten incoming tensors.
+    
+    Args:
+        data_key: Key in the batch mapping corresponding to image tensors.
+        start_index: Index at which to start flattening (default 0 flattens all dimensions).
+    """
 
     inner: Source
     data_key: str 
+    start_index: int
 
     def __post_init__(self) -> None:
         self.steps_per_epoch = self.inner.steps_per_epoch
         spec = _require_spec_mapping(self.inner.element_spec(), self.data_key)
         image_spec = spec[self.data_key]
-        flat_dim = math.prod(image_spec.shape)
+        rank = len(image_spec.shape)
+
+        if not 0 <= self.start_index < rank:
+            raise ValueError(
+                "start_index must be within the tensor rank; got "
+                f"start_index={self.start_index}, rank={rank}"
+            )
+
+        leading_shape = image_spec.shape[: self.start_index]
+        trailing_shape = image_spec.shape[self.start_index :]
+        flat_dim = math.prod(trailing_shape)
         spec[self.data_key] = jax.ShapeDtypeStruct(
-            shape=(flat_dim,),
+            shape=leading_shape + (flat_dim,),
             dtype=image_spec.dtype,
         )
         self._element_spec = spec
@@ -474,6 +491,7 @@ class _FlattenTransformSource(SourceTransform):
 
     def next(self, state):
         batch, mask, inner_state = self.inner.next(state)
-        image = batch[self.data_key]
-        flattened = _replace_mapping_item(batch, self.data_key, jnp.reshape(image, (-1,)))
+        tensor = batch[self.data_key]
+        desired_shape = self._element_spec[self.data_key].shape
+        flattened = _replace_mapping_item(batch, self.data_key, jnp.reshape(tensor, desired_shape))
         return flattened, mask, inner_state

@@ -552,24 +552,30 @@ def test_mnist_image_transforms_normalize_and_flatten():
         ordering="sequential",
     )
     source = NormalizeImageTransform(dtype=jnp.float32)(source)
-    source = FlattenTransform(data_key="image")(source)
+    source = FlattenTransform(data_key="image", start_index=1)(source)
     batched = BatchTransform(
-        batch_size=2,
+        batch_size=1,
         drop_last=True,
         element_spec_override=source.element_spec(),
     )(source)
 
     state = batched.init_state(jax.random.PRNGKey(0))
-    batch, mask, _ = batched.next(state)
+    batches = []
+    masks = []
+    for _ in range(2):
+        batch, mask, state = batched.next(state)
+        batches.append(np.asarray(batch["image"]))
+        masks.append(np.asarray(mask))
 
-    np.testing.assert_array_equal(np.asarray(mask), np.array([True, True]))
+    stacked = np.concatenate(batches, axis=0)
+    np.testing.assert_array_equal(np.concatenate(masks, axis=0), np.array([True, True]))
     assert batch["image"].dtype == jnp.float32
     np.testing.assert_allclose(
-        np.asarray(batch["image"]),
+        stacked,
         np.array(
             [
-                [0.0, 1.0],
-                [10.0 / 255.0, 20.0 / 255.0],
+                [[0.0, 1.0]],
+                [[10.0 / 255.0, 20.0 / 255.0]],
             ],
             dtype=np.float32,
         ),
