@@ -32,11 +32,17 @@ class SourceTransform(Source, Protocol):
 
 @dataclass
 class BatchTransform:
-    """Factory for batching elements emitted by a source."""
+    """Batch elements emitted by a source.
+    Args:
+        batch_size: Number of elements per batch.
+        drop_last: If True, drop the final batch if it is less than batch_size.
+        pad_last_batch: If True, pad the final batch with zeros if it is less than batch_size. Useful to prevent a second jit recompile. Make sure you use the mask to ignore padded values.
+    
+    """
 
     batch_size: int
     drop_last: bool = False
-    pad_last_batch: bool = True
+    pad_last_batch: bool = False
     element_spec_override: PyTree | None = None
 
     def __call__(self, inner: Source) -> Source:
@@ -78,8 +84,6 @@ class _BatchTransformSource(SourceTransform):
     def __post_init__(self) -> None:
         if self.batch_size <= 0:
             raise ValueError("batch_size must be positive.")
-        if not self.drop_last and not self.pad_last_batch:
-            raise ValueError("Enable pad_last_batch or drop_last to maintain static shapes.")
 
         self._samples_per_epoch = int(self.inner.steps_per_epoch)
         if self._samples_per_epoch <= 0:
@@ -196,7 +200,7 @@ class _BatchTransformSource(SourceTransform):
 
 @dataclass
 class MapTransform:
-    """Factory for map-style transforms."""
+    """Apply a pure function to the input for map-style transforms."""
 
     fn: Callable[[PyTree, jax.Array], PyTree]
 
@@ -228,7 +232,12 @@ class _MapTransformSource(SourceTransform):
 
 @dataclass
 class HostCallbackTransform:
-    """Factory that invokes a host callback between jittable pipeline stages."""
+    """Invoke a host callback between jittable pipeline stages. Useful
+    for logging or visualization.
+    
+    Args:
+        fn: Function to invoke on host. Receives (batch, mask) as arrays.
+    """
 
     fn: Callable[[PyTree, jax.Array], PyTree | None]
     element_spec_override: PyTree | None = None
@@ -299,7 +308,13 @@ def _resolve_device(device: jax.Device | str) -> jax.Device:
 
 @dataclass
 class DevicePutTransform:
-    """Factory that moves batches emitted by `inner` onto a target device."""
+    """Move batches onto a target device.
+    
+    Use this to move your data onto accelerators (e.g., GPU/TPU) as part of the data pipeline.
+
+    Args:
+        device: Target device or device string (e.g., 'cpu', 'gpu:0', 'tpu:1'). If None, defaults to the default jax device.
+    """
 
     device: jax.Device | str | None = None
 
@@ -361,9 +376,15 @@ def _require_spec_mapping(spec: PyTree, key: str) -> dict[str, jax.ShapeDtypeStr
 
 @dataclass
 class NormalizeImageTransform:
-    """Factory that scales uint8 image tensors to [0, 1] (or custom range)."""
+    """Scale uint8 image tensors to [0, 1] (or custom range).
+    
+    Args:
+        data_key: Key in the batch mapping corresponding to image tensors.
+        dtype: Target dtype for normalized images.
+        scale: Scale factor applied to uint8 images.
+        offset: Offset added after scaling."""
 
-    image_key: str = "image"
+    data_key: str = "image"
     dtype: jnp.dtype = jnp.float32
     scale: float = 1.0 / 255.0
     offset: float = 0.0
@@ -371,7 +392,7 @@ class NormalizeImageTransform:
     def __call__(self, inner: Source) -> Source:
         return _NormalizeImageTransformSource(
             inner=inner,
-            image_key=self.image_key,
+            data_key=self.data_key,
             dtype=self.dtype,
             scale=self.scale,
             offset=self.offset,
@@ -383,16 +404,16 @@ class _NormalizeImageTransformSource(SourceTransform):
     """Scale uint8 image tensors to [0, 1] (or custom range)."""
 
     inner: Source
-    image_key: str = "image"
+    data_key: str = "image"
     dtype: jnp.dtype = jnp.float32
     scale: float = 1.0 / 255.0
     offset: float = 0.0
 
     def __post_init__(self) -> None:
         self.steps_per_epoch = self.inner.steps_per_epoch
-        spec = _require_spec_mapping(self.inner.element_spec(), self.image_key)
-        image_spec = spec[self.image_key]
-        spec[self.image_key] = jax.ShapeDtypeStruct(
+        spec = _require_spec_mapping(self.inner.element_spec(), self.data_key)
+        image_spec = spec[self.data_key]
+        spec[self.data_key] = jax.ShapeDtypeStruct(
             shape=image_spec.shape,
             dtype=self.dtype,
         )
@@ -410,33 +431,36 @@ class _NormalizeImageTransformSource(SourceTransform):
         def _normalize(img):
             return img.astype(self.dtype) * self.scale + self.offset
 
-        normalized = _replace_mapping_item(batch, self.image_key, _normalize(batch[self.image_key]))
+        normalized = _replace_mapping_item(batch, self.data_key, _normalize(batch[self.data_key]))
         return normalized, mask, inner_state
 
 
 @dataclass
-class FlattenImageTransform:
-    """Factory that flattens per-sample image tensors."""
+class FlattenTransform:
+    """Flattens per-sample tensors.
+    
+    Args:
+        data_key: Key in the batch mapping corresponding to image tensors."""
 
-    image_key: str = "image"
+    data_key: str 
 
     def __call__(self, inner: Source) -> Source:
-        return _FlattenImageTransformSource(inner=inner, image_key=self.image_key)
+        return _FlattenTransformSource(inner=inner, data_key=self.data_key)
 
 
 @dataclass
-class _FlattenImageTransformSource(SourceTransform):
+class _FlattenTransformSource(SourceTransform):
     """Flatten per-sample image tensors."""
 
     inner: Source
-    image_key: str = "image"
+    data_key: str 
 
     def __post_init__(self) -> None:
         self.steps_per_epoch = self.inner.steps_per_epoch
-        spec = _require_spec_mapping(self.inner.element_spec(), self.image_key)
-        image_spec = spec[self.image_key]
+        spec = _require_spec_mapping(self.inner.element_spec(), self.data_key)
+        image_spec = spec[self.data_key]
         flat_dim = math.prod(image_spec.shape)
-        spec[self.image_key] = jax.ShapeDtypeStruct(
+        spec[self.data_key] = jax.ShapeDtypeStruct(
             shape=(flat_dim,),
             dtype=image_spec.dtype,
         )
@@ -450,6 +474,6 @@ class _FlattenImageTransformSource(SourceTransform):
 
     def next(self, state):
         batch, mask, inner_state = self.inner.next(state)
-        image = batch[self.image_key]
-        flattened = _replace_mapping_item(batch, self.image_key, jnp.reshape(image, (-1,)))
+        image = batch[self.data_key]
+        flattened = _replace_mapping_item(batch, self.data_key, jnp.reshape(image, (-1,)))
         return flattened, mask, inner_state

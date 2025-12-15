@@ -94,7 +94,15 @@ class DiskSourceState:
 
 @dataclass
 class ArraySampleSource:
-    """Sample-level stream over an in-memory PyTree of arrays."""
+    """Sample-level stream over an in-memory PyTree of arrays.
+    
+    This loads the entire dataset into memory as a PyTree of JAX arrays. 
+    
+    Args:
+        data: PyTree of arrays with leading dimension as sample axis.
+        ordering: Sample ordering strategy, either 'sequential' or 'shuffle'. Applied to the entire array.
+    """
+
 
     data: PyTree
     ordering: Literal["sequential", "shuffle"] = "shuffle"
@@ -181,11 +189,22 @@ class ArraySampleSource:
 
 @dataclass
 class DiskSampleSource(Source):
-    """Sample-level stream that loads items via a Python callback (disk, RPC, etc.)."""
+    """Sample-level stream that loads items via a Python callback (disk, RPC, etc.).
+
+    Use this if your dataset will not fit in system memory.
+
+    Args:
+        length: Number of samples in the dataset.
+        sample_fn: Python callable that takes an integer index and returns a PyTree of arrays.
+        sample_spec: Optional PyTree of `jax.ShapeDtypeStruct` describing the shape and dtype of samples.
+            If not provided, the first sample (index 0) will be used to infer the spec.
+        ordering: Sample ordering strategy, either 'sequential' or 'shuffle'. The shuffling occurs over the entire dataset, not within the prefetch buffer.
+        prefetch_size: Number of samples to prefetch into a JAX array buffer. Set this larger to achieve better throughput at the cost of more memory usage.
+    """
 
     length: int
     sample_fn: Callable[[int], PyTree]
-    sample_spec: PyTree
+    sample_spec: PyTree | None = None
     ordering: Literal["sequential", "shuffle"] = "shuffle"
     prefetch_size: int = 64
 
@@ -194,6 +213,15 @@ class DiskSampleSource(Source):
             raise ValueError("Dataset cannot be empty.")
         if self.prefetch_size <= 0:
             raise ValueError("prefetch_size must be positive.")
+
+        if self.sample_spec is None:
+            example = self.sample_fn(0)
+
+            def _to_spec(leaf):
+                arr = np.asarray(leaf)
+                return jax.ShapeDtypeStruct(shape=arr.shape, dtype=arr.dtype)
+
+            self.sample_spec = tree_util.tree_map(_to_spec, example)
 
         leaves = tree_util.tree_leaves(self.sample_spec)
         if not leaves:
@@ -356,7 +384,17 @@ class GymnaxSourceState:
 
 @dataclass
 class GymnaxSource(Source):
-    """Stream transitions by rolling out a Gymnax environment with a policy."""
+    """Stream transitions by rolling out a Gymnax environment with a policy.
+    
+    Useful for reinforcement learning.
+
+    Args:
+        env: Gymnax environment instance.
+        env_params: Parameters to pass to the environment's reset and step functions.
+        policy_fn: Callable that takes (observation, policy_params, key) and returns an action.
+        policy_params: Optional parameters to pass to the policy function.
+        steps_per_epoch: Number of environment steps per epoch.
+    """
 
     env: Any
     env_params: Any

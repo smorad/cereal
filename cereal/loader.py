@@ -7,70 +7,10 @@ from typing import Any, Callable, Tuple
 
 import jax
 import jax.numpy as jnp
-from jax import tree_util
-import numpy as np
 
-from .dataset_protocol import DatasetProtocol
 from .sources import Source
 
 PyTree = Any
-
-
-def _leaf_to_numpy(value: Any) -> np.ndarray:
-    if isinstance(value, np.ndarray):
-        return value
-    return np.asarray(value)
-
-
-def _item_to_numpy(sample: Any) -> Any:
-    return tree_util.tree_map(_leaf_to_numpy, sample)
-
-
-def dataset_to_jax(
-    dataset: DatasetProtocol,
-    *,
-    storage_device: jax.Device | str | None = "cpu",
-) -> PyTree:
-    """Materialize a finite dataset into host-resident JAX arrays."""
-
-    length = len(dataset)
-    if length == 0:
-        raise ValueError("Dataset must contain at least one element.")
-
-    records = [_item_to_numpy(dataset[i]) for i in range(length)]
-    stacked = tree_util.tree_map(lambda *xs: np.stack(xs, axis=0), *records)
-
-    target_device = None
-    if storage_device is not None:
-        if isinstance(storage_device, jax.Device):
-            target_device = storage_device
-        else:
-            device_str = storage_device
-            index = None
-            if ":" in device_str:
-                device_str, idx_str = device_str.split(":", 1)
-                index = int(idx_str)
-            matching = [d for d in jax.devices() if d.platform == device_str]
-            if not matching:
-                raise ValueError(f"No JAX devices found for platform '{storage_device}'.")
-            if index is not None:
-                if index >= len(matching):
-                    raise ValueError(
-                        f"Requested device '{storage_device}' but only {len(matching)} devices available."
-                    )
-                target_device = matching[index]
-            else:
-                target_device = matching[0]
-
-    def _to_jax(arr: np.ndarray) -> jax.Array:
-        if target_device is None:
-            return jnp.asarray(arr)
-        with jax.default_device(target_device):
-            return jnp.asarray(arr)
-
-    return tree_util.tree_map(_to_jax, stacked)
-
-
 @jax.tree_util.register_pytree_node_class
 @dataclass
 class LoaderState:
@@ -85,9 +25,37 @@ class LoaderState:
         return cls(inner_state=inner_state)
 
 
+class _LoaderIterator:
+    """Python iterator that walks a loader state for a fixed number of steps."""
+
+    def __init__(self, loader: DataLoader, state: LoaderState, steps: int | None) -> None:
+        self._loader = loader
+        self._state = state
+        self._remaining = steps
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._remaining is not None:
+            if self._remaining <= 0:
+                raise StopIteration
+            self._remaining -= 1
+
+        batch, self._state, mask = self._loader.next(self._state)
+        return batch, mask
+
+    @property
+    def state(self) -> LoaderState:
+        return self._state
+
+
 @dataclass
 class DataLoader:
-    """Composable pipeline constructed from explicit stages."""
+    """Composable pipeline constructed from explicit stages.
+    
+    Args:
+        pipeline: Either a Source or a sequence of stages to compose into a data pipeline."""
 
     pipeline: Source | Sequence[Any]
 
@@ -138,9 +106,24 @@ class DataLoader:
         inner_state = self._source.init_state(key)
         return LoaderState(inner_state=inner_state)
 
-    def next_batch(self, state: LoaderState) -> Tuple[PyTree, LoaderState, jax.Array]:
+    def next(self, state: LoaderState) -> Tuple[PyTree, LoaderState, jax.Array]:
         batch, mask, inner_state = self._source.next(state.inner_state)
         return batch, LoaderState(inner_state=inner_state), mask
+
+    def iterate(self, state: LoaderState, *, steps: int | None = None) -> _LoaderIterator:
+        """Return a Python iterator over loader outputs.
+
+        Args:
+            state: Starting loader state.
+            steps: Number of steps (updates) to iterate; defaults to a single epoch.
+                Pass ``None`` to iterate indefinitely.
+        """
+
+        if steps is None:
+            steps = self.steps_per_epoch
+        elif steps < 0:
+            raise ValueError("steps must be non-negative or None.")
+        return _LoaderIterator(self, state, steps)
 
     def scan_epoch(
         self,
@@ -152,7 +135,7 @@ class DataLoader:
 
         def _body(loop_state, _):
             loader_state, loop_carry = loop_state
-            batch, loader_state, mask = self.next_batch(loader_state)
+            batch, loader_state, mask = self.next(loader_state)
             new_carry, output = body_fn(loop_carry, batch, mask)
             return (loader_state, new_carry), output
 
