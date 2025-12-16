@@ -40,12 +40,13 @@ for epoch in range(2):
         ...  # train your network!
 ```
 
-Go ahead and `jit` the loader, it is stateless
+The above code is quite slow. Go ahead and `jit` the loader, it is stateless
 
 ```python
+iterate = jax.jit(loader.next)
 for epoch in range(2):
     for _ in range(loader.steps_per_epoch):
-        batch, state, mask = jax.jit(loader.next)(state)
+        batch, state, mask = iterate(state)
         ... # Train your network
 ```
 
