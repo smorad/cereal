@@ -20,7 +20,6 @@ import jax.numpy as jnp
 
 from cyreal.transforms import BatchTransform, DevicePutTransform
 from cyreal.loader import DataLoader
-from cyreal.rl import set_loader_policy_state, set_source_policy_state
 from cyreal.sources import ArraySource
 from cyreal.datasets import MNISTDataset
 
