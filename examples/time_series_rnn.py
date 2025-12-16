@@ -15,9 +15,9 @@ import jax.numpy as jnp
 import optax
 import tqdm
 
-from cyreal import BatchTransform, DataLoader, DevicePutTransform
+from cyreal.transforms import BatchTransform, DevicePutTransform, TimeSeriesBatchTransform
+from cyreal.loader import DataLoader
 from cyreal.datasets import DailyMinTemperaturesDataset, SunspotsDataset
-from cyreal.transforms import TimeSeriesBatchTransform
 
 SequenceBatch = dict[str, jax.Array]
 DatasetCls = Type[DailyMinTemperaturesDataset]

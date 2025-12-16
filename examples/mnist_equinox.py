@@ -16,7 +16,10 @@ import jax.numpy as jnp
 import optax
 import tqdm
 
-from cyreal import ArraySource, BatchTransform, DataLoader, DevicePutTransform, MNISTDataset, FlattenTransform
+from cyreal.sources import ArraySource
+from cyreal.transforms import BatchTransform, DevicePutTransform, FlattenTransform
+from cyreal.loader import DataLoader
+from cyreal.datasets import MNISTDataset
 
 Batch = dict[str, jax.Array]
 
