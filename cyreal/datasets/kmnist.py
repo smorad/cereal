@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..dataset_protocol import DatasetProtocol
+from .dataset_protocol import DatasetProtocol
 from ..sources import DiskSource
 from .utils import (
     ensure_file as _ensure_file,
@@ -34,7 +34,7 @@ KMNIST_URLS = {
 
 @dataclass
 class KMNISTDataset(DatasetProtocol):
-    """Kuzushiji-MNIST dataset consisting of 28x28 grayscale characters."""
+    """Kuzushiji-MNIST dataset consisting of 28x28 grayscale Japanese characters."""
 
     split: Literal["train", "test"] = "train"
     cache_dir: str | Path | None = None
@@ -64,6 +64,7 @@ class KMNISTDataset(DatasetProtocol):
         }
 
     def as_array_dict(self) -> dict[str, jax.Array]:
+        """Expose the full dataset as a PyTree of JAX arrays."""
         return {
             "image": self._images,
             "label": self._labels,
@@ -78,6 +79,8 @@ class KMNISTDataset(DatasetProtocol):
         ordering: Literal["sequential", "shuffle"] = "shuffle",
         prefetch_size: int = 64,
     ) -> DiskSource:
+        """Return the dataset in a disk streaming format."""
+
         base_dir = resolve_cache_dir(cache_dir, default_name="kmnist")
 
         images_gz = base_dir / f"{split}_images.gz"

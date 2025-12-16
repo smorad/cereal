@@ -1,53 +1,36 @@
-"""Jittable dataset utilities for JAX."""
-from __future__ import annotations
+"""Jittable dataset utilities for JAX.
 
-from .dataset_protocol import DatasetProtocol
-from .datasets import (
-    CIFAR10Dataset,
-    CIFAR100Dataset,
-    EMNISTDataset,
-    FashionMNISTDataset,
-    KMNISTDataset,
-    MNISTDataset,
-)
-from .loader import (
-    DataLoader,
-    LoaderState,
-)
-from .sources import ArraySource, DiskSource, GymnaxSource, Source
-from .transforms import (
-    BatchTransform,
-    DevicePutTransform,
-    FlattenTransform,
-    HostCallbackTransform,
-    MapTransform,
-    NormalizeImageTransform,
-    BufferTransform,
-    TimeSeriesBatchTransform,
-)
+We use a producer and transform model. Sources stream data from datasets and Transforms transform the data stream. The DataLoader class composes sources and transforms into jittable data pipelines.
 
-__all__ = [
-    "DatasetProtocol",
-    "DataLoader",
-    "LoaderState",
-    "CIFAR10Dataset",
-    "CIFAR100Dataset",
-    "EMNISTDataset",
-    "FashionMNISTDataset",
-    "KMNISTDataset",
-    "Kuzushiji49Dataset",
-    "MNISTDataset",
-    "ArraySource",
-    "DiskSource",
-    "GymnaxSource",
-    "VectorGymnaxSource",
-    "Source",
-    "BatchTransform",
-    "DevicePutTransform",
-    "FlattenTransform",
-    "HostCallbackTransform",
-    "MapTransform",
-    "NormalizeImageTransform",
-    "BufferTransform",
-    "TimeSeriesBatchTransform",
-]
+
+
+If you are just getting started with `cyreal`, you probably want to 
+
+- `cyreal.datasets` contains datasets such as MNIST, CIFAR-10, etc and associated utilities.
+- `cyreal.loader` contains the `DataLoader` class for building jittable data pipelines.
+- `cyreal.sources` contains data sources such as `ArraySource` and `GymnaxSource`.
+- `cyreal.transforms` contains data transforms such as `BatchTransform` and `DevicePutTransform`.
+- `cyreal.rl` contains some RL-specific utilities for the DataLoader.
+"""
+
+# from .datasets import (
+#     CIFAR10Dataset,
+#     CIFAR100Dataset,
+#     EMNISTDataset,
+#     FashionMNISTDataset,
+#     KMNISTDataset,
+#     MNISTDataset,
+# )
+# from .loader import (
+#     DataLoader,
+# )
+# from .transforms import (
+#     BatchTransform,
+#     DevicePutTransform,
+#     FlattenTransform,
+#     HostCallbackTransform,
+#     MapTransform,
+#     NormalizeImageTransform,
+#     BufferTransform,
+#     TimeSeriesBatchTransform,
+# )

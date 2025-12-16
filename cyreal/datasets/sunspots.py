@@ -6,7 +6,7 @@ from typing import Literal
 
 import jax
 
-from ..dataset_protocol import DatasetProtocol
+from .dataset_protocol import DatasetProtocol
 from ..sources import DiskSource
 from .time_utils import make_sequence_disk_source, prepare_time_windows
 from .utils import to_host_jax_array as _to_host_jax_array
@@ -18,7 +18,7 @@ SUNSPOTS_URL = (
 
 @dataclass
 class SunspotsDataset(DatasetProtocol):
-    """Monthly mean sunspot counts from SILSO."""
+    """A time series classification dataset of sunspot counts from SILSO."""
 
     split: Literal["train", "test"] = "train"
     context_length: int = 24
@@ -54,6 +54,7 @@ class SunspotsDataset(DatasetProtocol):
         }
 
     def as_array_dict(self) -> dict[str, jax.Array]:
+        """Expose the full dataset as a PyTree of JAX arrays."""
         return {"context": self._contexts, "target": self._targets}
 
     @classmethod
@@ -69,6 +70,8 @@ class SunspotsDataset(DatasetProtocol):
         ordering: Literal["sequential", "shuffle"] = "shuffle",
         prefetch_size: int = 64,
     ) -> DiskSource:
+        """Return the dataset in a disk streaming format."""
+
         contexts, targets = prepare_time_windows(
             dataset_name="sunspots",
             filename="monthly-sunspots.csv",

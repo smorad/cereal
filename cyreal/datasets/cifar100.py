@@ -10,7 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..dataset_protocol import DatasetProtocol
+from .dataset_protocol import DatasetProtocol
 from ..sources import DiskSource
 from .utils import (
     download_archive,
@@ -55,7 +55,7 @@ def _ensure_split_numpy_cache(
 
 @dataclass
 class CIFAR100Dataset(DatasetProtocol):
-    """CIFAR-100 dataset that keeps preprocessing within NumPy/JAX."""
+    """The CIFAR-100 image classification dataset."""
 
     split: Literal["train", "test"] = "train"
     cache_dir: str | Path | None = None
@@ -82,6 +82,7 @@ class CIFAR100Dataset(DatasetProtocol):
         }
 
     def as_array_dict(self) -> dict[str, jax.Array]:
+        """Expose the full dataset as a PyTree of JAX arrays."""
         return {
             "image": self._images,
             "label": self._fine_labels,
@@ -97,6 +98,8 @@ class CIFAR100Dataset(DatasetProtocol):
         ordering: Literal["sequential", "shuffle"] = "shuffle",
         prefetch_size: int = 64,
     ) -> DiskSource:
+        """Return the dataset in a disk streaming format."""
+
         base_dir = resolve_cache_dir(cache_dir, default_name="cifar100")
         archive_path = base_dir / "cifar-100-python.tar.gz"
         download_archive(CIFAR100_URL, archive_path)

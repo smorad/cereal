@@ -11,9 +11,10 @@ import jax.numpy as jnp
 from .sources import Source
 
 PyTree = Any
+
 @jax.tree_util.register_pytree_node_class
 @dataclass
-class LoaderState:
+class _LoaderState:
     inner_state: Any
 
     def tree_flatten(self):
@@ -28,7 +29,7 @@ class LoaderState:
 class _LoaderIterator:
     """Python iterator that walks a loader state for a fixed number of steps."""
 
-    def __init__(self, loader: DataLoader, state: LoaderState, steps: int | None) -> None:
+    def __init__(self, loader: DataLoader, state: _LoaderState, steps: int | None) -> None:
         self._loader = loader
         self._state = state
         self._remaining = steps
@@ -46,18 +47,16 @@ class _LoaderIterator:
         return batch, mask
 
     @property
-    def state(self) -> LoaderState:
+    def state(self) -> _LoaderState:
         return self._state
 
 
 @dataclass
 class DataLoader:
-    """Composable pipeline constructed from explicit stages.
-    
-    Args:
-        pipeline: Either a Source or a sequence of stages to compose into a data pipeline."""
+    """Composable pipeline constructed from explicit stages."""
 
     pipeline: Source | Sequence[Any]
+    """Either a Source or a sequence of stages to compose into a data pipeline."""
 
     def __post_init__(self) -> None:
         self._source = self._coerce_pipeline(self.pipeline)
@@ -102,15 +101,15 @@ class DataLoader:
 
         raise TypeError("Pipeline entries after the first must be transforms or callables returning Sources.")
 
-    def init_state(self, key: jax.Array | None = None) -> LoaderState:
+    def init_state(self, key: jax.Array) -> _LoaderState:
         inner_state = self._source.init_state(key)
-        return LoaderState(inner_state=inner_state)
+        return _LoaderState(inner_state=inner_state)
 
-    def next(self, state: LoaderState) -> Tuple[PyTree, LoaderState, jax.Array]:
+    def next(self, state: _LoaderState) -> Tuple[PyTree, _LoaderState, jax.Array]:
         batch, mask, inner_state = self._source.next(state.inner_state)
-        return batch, LoaderState(inner_state=inner_state), mask
+        return batch, _LoaderState(inner_state=inner_state), mask
 
-    def iterate(self, state: LoaderState, *, steps: int | None = None) -> _LoaderIterator:
+    def iterate(self, state: _LoaderState, *, steps: int | None = None) -> _LoaderIterator:
         """Return a Python iterator over loader outputs.
 
         Args:
@@ -127,7 +126,7 @@ class DataLoader:
 
     def scan_epoch(
         self,
-        state: LoaderState,
+        state: _LoaderState,
         carry: Any,
         body_fn: Callable[[Any, PyTree, jax.Array], Tuple[Any, Any]],
     ):

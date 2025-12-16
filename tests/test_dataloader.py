@@ -6,19 +6,20 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from cyreal import (
+from cyreal.loader import DataLoader
+from cyreal.sources import (
     ArraySource,
-    BatchTransform,
-    DataLoader,
-    DevicePutTransform,
     DiskSource,
-    FlattenTransform,
     GymnaxSource,
+)
+from cyreal.transforms import (
+    BatchTransform,
+    DevicePutTransform,
     HostCallbackTransform,
     MapTransform,
-    NormalizeImageTransform,
-    Source,
     TimeSeriesBatchTransform,
+    FlattenTransform,
+    NormalizeImageTransform,
 )
 from cyreal.rl import set_loader_policy_state, set_source_policy_state
 

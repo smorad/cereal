@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..dataset_protocol import DatasetProtocol
+from .dataset_protocol import DatasetProtocol
 from ..sources import DiskSource
 from .utils import (
     ensure_file as _ensure_file,
@@ -34,7 +34,7 @@ MNIST_URLS = {
 
 @dataclass
 class MNISTDataset(DatasetProtocol):
-    """Lightweight MNIST dataset that leaves preprocessing to transforms."""
+    """Classic MNIST image classification dataset."""
 
     split: Literal["train", "test"] = "train"
     cache_dir: str | Path | None = None
@@ -80,6 +80,8 @@ class MNISTDataset(DatasetProtocol):
         ordering: Literal["sequential", "shuffle"] = "shuffle",
         prefetch_size: int = 64,
     ) -> DiskSource:
+        """Return the dataset in a disk streaming format."""
+
         base_dir = resolve_cache_dir(cache_dir, default_name="jax_mnist")
 
         images_gz = base_dir / f"{split}_images.gz"

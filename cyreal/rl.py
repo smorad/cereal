@@ -6,7 +6,7 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from .loader import LoaderState
+from .loader import _LoaderState
 
 PyTree = Any
 
@@ -28,13 +28,13 @@ def _inject_policy_state(component: Any, policy_state: PyTree, new_episode) -> A
 
 
 def set_loader_policy_state(
-    state: LoaderState,
+    state: _LoaderState,
     policy_state: PyTree,
     *,
     new_episode: bool | jnp.ndarray | None = None,
-) -> LoaderState:
+) -> _LoaderState:
     """Return a LoaderState with policy_state replaced throughout the pipeline."""
-    return LoaderState(inner_state=_inject_policy_state(state.inner_state, policy_state, new_episode))
+    return _LoaderState(inner_state=_inject_policy_state(state.inner_state, policy_state, new_episode))
 
 
 def set_source_policy_state(state: Any, policy_state: PyTree, *, new_episode=None):
