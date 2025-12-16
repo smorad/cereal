@@ -10,7 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..dataset_protocol import DatasetProtocol
+from .dataset_protocol import DatasetProtocol
 from ..sources import DiskSource
 from .utils import (
     download_archive,
@@ -65,7 +65,7 @@ def _ensure_split_numpy_cache(
 
 @dataclass
 class CIFAR10Dataset(DatasetProtocol):
-    """Download-free CIFAR-10 access ready for `ArraySampleSource`."""
+    """The CIFAR10 image classification Dataset."""
 
     split: Literal["train", "test"] = "train"
     cache_dir: str | Path | None = None
@@ -106,6 +106,8 @@ class CIFAR10Dataset(DatasetProtocol):
         ordering: Literal["sequential", "shuffle"] = "shuffle",
         prefetch_size: int = 64,
     ) -> DiskSource:
+        """Return the dataset in a disk streaming format."""
+
         base_dir = resolve_cache_dir(cache_dir, default_name="cyreal_cifar10")
         archive_path = base_dir / "cifar-10-python.tar.gz"
         download_archive(CIFAR10_URL, archive_path)

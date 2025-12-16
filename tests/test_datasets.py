@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from cyreal import BatchTransform
+from cyreal.transforms import BatchTransform
 from cyreal.datasets import (
     CIFAR10Dataset,
     CIFAR100Dataset,

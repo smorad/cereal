@@ -24,6 +24,7 @@ class Source(Protocol[StateT]):
     """
 
     steps_per_epoch: int
+    """Number of items emitted per epoch."""
 
     def init_state(self, key: jax.Array) -> StateT:
         """Return an initial state for the source.
@@ -58,7 +59,7 @@ class Source(Protocol[StateT]):
 
 @jax.tree_util.register_pytree_node_class
 @dataclass
-class ArraySourceState:
+class _ArraySourceState:
     indices: jax.Array
     mask: jax.Array
     position: jax.Array
@@ -76,7 +77,7 @@ class ArraySourceState:
 
 @jax.tree_util.register_pytree_node_class
 @dataclass
-class DiskSourceState:
+class _DiskSourceState:
     indices: jax.Array
     position: jax.Array
     key: jax.Array
@@ -121,7 +122,7 @@ class DiskSourceState:
 
 
 @dataclass
-class ArraySource(Source[ArraySourceState]):
+class ArraySource(Source[_ArraySourceState]):
     """Sample-level stream over an in-memory PyTree of arrays.
 
     Args:
@@ -169,7 +170,7 @@ class ArraySource(Source[ArraySourceState]):
 
         return base, self._mask_template
 
-    def init_state(self, key: jax.Array) -> ArraySourceState:
+    def init_state(self, key: jax.Array) -> _ArraySourceState:
         """Create the initial iteration state.
 
         Args:
@@ -180,9 +181,9 @@ class ArraySource(Source[ArraySourceState]):
         indices, mask = self._build_epoch_indices(perm_key)
         position = jnp.array(0, dtype=jnp.int32)
         epoch = jnp.array(0, dtype=jnp.int32)
-        return ArraySourceState(indices=indices, mask=mask, position=position, key=key, epoch=epoch)
+        return _ArraySourceState(indices=indices, mask=mask, position=position, key=key, epoch=epoch)
 
-    def next(self, state: ArraySourceState) -> tuple[PyTree, jax.Array, ArraySourceState]:
+    def next(self, state: _ArraySourceState) -> tuple[PyTree, jax.Array, _ArraySourceState]:
         """Return the next sample (with mask) and the advanced state."""
         index = jax.lax.dynamic_index_in_dim(state.indices, state.position, axis=0, keepdims=False)
         mask_value = jax.lax.dynamic_index_in_dim(state.mask, state.position, axis=0, keepdims=False)
@@ -196,7 +197,7 @@ class ArraySource(Source[ArraySourceState]):
         def _reset_epoch(_: None):
             new_key, perm_key = jax.random.split(state.key)
             indices, mask = self._build_epoch_indices(perm_key)
-            return ArraySourceState(
+            return _ArraySourceState(
                 indices=indices,
                 mask=mask,
                 position=jnp.array(0, dtype=jnp.int32),
@@ -205,7 +206,7 @@ class ArraySource(Source[ArraySourceState]):
             )
 
         def _advance(_: None):
-            return ArraySourceState(
+            return _ArraySourceState(
                 indices=state.indices,
                 mask=state.mask,
                 position=next_position,
@@ -219,25 +220,22 @@ class ArraySource(Source[ArraySourceState]):
 
 
 @dataclass
-class DiskSource(Source[DiskSourceState]):
+class DiskSource(Source[_DiskSourceState]):
     """Sample-level stream that loads items via a Python callback (disk, RPC, etc.).
 
-    Use this if your dataset will not fit in system memory.
-
-    Args:
-        length: Number of samples in the dataset.
-        sample_fn: Python callable that takes an integer index and returns a PyTree of arrays.
-        sample_spec: Optional PyTree of `jax.ShapeDtypeStruct` describing the shape and dtype of samples.
-            If not provided, the first sample (index 0) will be used to infer the spec.
-        ordering: Sample ordering strategy, either 'sequential' or 'shuffle'. The shuffling occurs over the entire dataset, not within the prefetch buffer.
-        prefetch_size: Number of samples to prefetch into a JAX array buffer. Set this larger to achieve better throughput at the cost of more memory usage.
+    This is slow, only use this if your dataset will not fit in system memory.
     """
 
     length: int
+    """Number of samples in the dataset."""
     sample_fn: Callable[[int], PyTree]
+    """Python callable that takes an integer index and returns a PyTree of arrays."""
     sample_spec: PyTree | None = None
+    """Optional PyTree of `jax.ShapeDtypeStruct` describing the shape and dtype of samples."""
     ordering: Literal["sequential", "shuffle"] = "shuffle"
+    """Sample ordering strategy, either 'sequential' or 'shuffle'. The shuffling occurs over the entire dataset, not within the prefetch buffer."""
     prefetch_size: int = 64
+    """Number of samples to prefetch into a JAX array buffer. Set this larger to achieve better throughput at the cost of more memory usage."""
 
     def __post_init__(self) -> None:
         if self.length <= 0:
@@ -294,13 +292,13 @@ class DiskSource(Source[DiskSourceState]):
             raise ValueError(f"Unknown ordering '{self.ordering}'.")
         return base
 
-    def init_state(self, key: jax.Array) -> DiskSourceState:
+    def init_state(self, key: jax.Array) -> _DiskSourceState:
         """Build the starting state, optionally seeding randomness with ``key``."""
         key, perm_key = jax.random.split(key)
         indices = self._build_epoch_indices(perm_key)
         position = jnp.array(0, dtype=jnp.int32)
         epoch = jnp.array(0, dtype=jnp.int32)
-        return DiskSourceState(
+        return _DiskSourceState(
             indices=indices,
             position=position,
             key=key,
@@ -321,11 +319,11 @@ class DiskSource(Source[DiskSourceState]):
                 samples.append(self._zero_sample)
         return tree_util.tree_map(lambda *xs: np.stack(xs, axis=0), *samples)
 
-    def _maybe_reset_epoch(self, state: DiskSourceState) -> DiskSourceState:
-        def _reset(state: DiskSourceState):
+    def _maybe_reset_epoch(self, state: _DiskSourceState) -> _DiskSourceState:
+        def _reset(state: _DiskSourceState):
             new_key, perm_key = jax.random.split(state.key)
             indices = self._build_epoch_indices(perm_key)
-            return DiskSourceState(
+            return _DiskSourceState(
                 indices=indices,
                 position=jnp.array(0, dtype=jnp.int32),
                 key=new_key,
@@ -337,11 +335,11 @@ class DiskSource(Source[DiskSourceState]):
 
         return jax.lax.cond(state.position >= self._num_samples, _reset, lambda s: s, state)
 
-    def _maybe_refill_buffer(self, state: DiskSourceState) -> DiskSourceState:
-        def _needs(state: DiskSourceState):
+    def _maybe_refill_buffer(self, state: _DiskSourceState) -> _DiskSourceState:
+        def _needs(state: _DiskSourceState):
             return jnp.logical_or(state.buffer_count == 0, state.buffer_pos >= state.buffer_count)
 
-        def _refill(state: DiskSourceState):
+        def _refill(state: _DiskSourceState):
             refreshed = self._maybe_reset_epoch(state)
             remaining = self._num_samples - refreshed.position
             chunk = jnp.minimum(remaining, self.prefetch_size)
@@ -360,7 +358,7 @@ class DiskSource(Source[DiskSourceState]):
             valid_mask = offsets < chunk
             buffer = io_callback(self._chunk_callback, self._chunk_spec, chunk_indices, valid_mask)
             new_position = refreshed.position + chunk
-            return DiskSourceState(
+            return _DiskSourceState(
                 indices=refreshed.indices,
                 position=new_position,
                 key=refreshed.key,
@@ -372,7 +370,7 @@ class DiskSource(Source[DiskSourceState]):
 
         return jax.lax.cond(_needs(state), _refill, lambda s: s, state)
 
-    def next(self, state: DiskSourceState) -> tuple[PyTree, jax.Array, DiskSourceState]:
+    def next(self, state: _DiskSourceState) -> tuple[PyTree, jax.Array, _DiskSourceState]:
         """Return buffered sample, all-True mask, and updated state."""
         state = self._maybe_refill_buffer(state)
         sample = tree_util.tree_map(
@@ -382,7 +380,7 @@ class DiskSource(Source[DiskSourceState]):
             state.buffer,
         )
         mask_value = jnp.array(True, dtype=bool)
-        new_state = DiskSourceState(
+        new_state = _DiskSourceState(
             indices=state.indices,
             position=state.position,
             key=state.key,

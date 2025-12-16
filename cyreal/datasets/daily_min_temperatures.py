@@ -6,7 +6,7 @@ from typing import Literal
 
 import jax
 
-from ..dataset_protocol import DatasetProtocol
+from .dataset_protocol import DatasetProtocol
 from ..sources import DiskSource
 from .time_utils import make_sequence_disk_source, prepare_time_windows
 from .utils import to_host_jax_array as _to_host_jax_array
@@ -18,7 +18,7 @@ DAILY_MIN_TEMPS_URL = (
 
 @dataclass
 class DailyMinTemperaturesDataset(DatasetProtocol):
-    """Sliding-window dataset built from Bureau of Meteorology temperatures."""
+    """A time series regression dataset of daily minimum temperatures from the Bureau of Meteorology."""
 
     split: Literal["train", "test"] = "train"
     context_length: int = 30
@@ -54,6 +54,7 @@ class DailyMinTemperaturesDataset(DatasetProtocol):
         }
 
     def as_array_dict(self) -> dict[str, jax.Array]:
+        """Expose the full dataset as a PyTree of JAX arrays."""
         return {"context": self._contexts, "target": self._targets}
 
     @classmethod
@@ -69,6 +70,8 @@ class DailyMinTemperaturesDataset(DatasetProtocol):
         ordering: Literal["sequential", "shuffle"] = "shuffle",
         prefetch_size: int = 64,
     ) -> DiskSource:
+        """Return the dataset in a disk streaming format."""
+
         contexts, targets = prepare_time_windows(
             dataset_name="daily_min_temperatures",
             filename="daily-min-temperatures.csv",

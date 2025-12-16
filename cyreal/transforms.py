@@ -35,22 +35,20 @@ def _write_buffer_impl(buffer: PyTree, value: PyTree, index: jax.Array) -> PyTre
 
 
 class SourceTransform(Source, Protocol):
+    """Base class for Transform implementations."""
     inner: Source
 
 
 @dataclass
 class BatchTransform:
-    """Batch elements emitted by a source.
-    Args:
-        batch_size: Number of elements per batch.
-        drop_last: If True, drop the final batch if it is less than batch_size.
-        pad_last_batch: If True, pad the final batch with zeros if it is less than batch_size. Useful to prevent a second jit recompile. Make sure you use the mask to ignore padded values.
-    
-    """
+    """Batch elements emitted by a source."""
 
     batch_size: int
+    """Number of elements per batch."""
     drop_last: bool = False
+    """If True, drop the final batch if it is less than batch_size."""
     pad_last_batch: bool = False
+    """If True, pad the final batch with zeros if it is less than batch_size. Useful to prevent a second jit recompile. Make sure you use the mask to ignore padded values."""
     element_spec_override: PyTree | None = None
 
     def __call__(self, inner: Source) -> Source:
@@ -66,7 +64,7 @@ class BatchTransform:
 
 @jax.tree_util.register_pytree_node_class
 @dataclass
-class BatchTransformState:
+class _BatchTransformState:
     inner_state: Any
     position_in_epoch: jax.Array
 
@@ -74,7 +72,7 @@ class BatchTransformState:
         return (self.inner_state, self.position_in_epoch), None
 
     @classmethod
-    def tree_unflatten(cls, aux_data, children):
+    def tree_unflatten(cls, aux, children):
         inner_state, position_in_epoch = children
         return cls(inner_state=inner_state, position_in_epoch=position_in_epoch)
 
@@ -121,8 +119,8 @@ class _BatchTransformSource(SourceTransform):
     def element_spec(self) -> PyTree:
         return self._element_spec
 
-    def init_state(self, key: jax.Array) -> BatchTransformState:
-        return BatchTransformState(
+    def init_state(self, key: jax.Array) -> _BatchTransformState:
+        return _BatchTransformState(
             inner_state=self.inner.init_state(key),
             position_in_epoch=jnp.array(0, dtype=jnp.int32),
         )
@@ -130,7 +128,7 @@ class _BatchTransformSource(SourceTransform):
     def _write_slice(self, buffer: PyTree, value: PyTree, index: int) -> PyTree:
         return tree_util.tree_map(lambda buf, val: buf.at[index].set(val), buffer, value)
 
-    def _maybe_skip_incomplete_epoch(self, state: BatchTransformState) -> BatchTransformState:
+    def _maybe_skip_incomplete_epoch(self, state: _BatchTransformState) -> _BatchTransformState:
         if not self.drop_last:
             return state
 
@@ -161,14 +159,14 @@ class _BatchTransformSource(SourceTransform):
                 (state.inner_state, state.position_in_epoch),
                 jnp.arange(self.batch_size),
             )
-            return BatchTransformState(
+            return _BatchTransformState(
                 inner_state=inner_state,
                 position_in_epoch=jnp.array(0, dtype=jnp.int32),
             )
 
         return jax.lax.cond(need_skip, _drain, lambda operand: operand[0], (state, remaining))
 
-    def next(self, state: BatchTransformState):
+    def next(self, state: _BatchTransformState):
         state = self._maybe_skip_incomplete_epoch(state)
 
         def body(carry, i):
@@ -200,15 +198,48 @@ class _BatchTransformSource(SourceTransform):
             jnp.array(0, dtype=jnp.int32),
             position,
         )
-        return batch, mask, BatchTransformState(
+        return batch, mask, _BatchTransformState(
             inner_state=inner_state,
             position_in_epoch=wrapped_position,
         )
 
 
+@dataclass
+class BufferTransform:
+    """Cache streaming samples for later randomized replay.
+
+    This transform stores scalar samples emitted by ``inner`` and, once the
+    buffer is "prefilled", serves elements from the cache.
+    The elements can be consumed directly, or batching/minibatching can 
+    be handled by ``BatchTransform`` or similar
+    utilities placed after the buffer in the pipeline.
+    """
+
+    capacity: int
+    """Maximum number of samples to store."""
+    prefill: int 
+    """Number of valid samples to observe before consuming from the buffer."""
+    sample_size: int = 1
+    """Number of buffered samples emitted per `next` call."""
+    mode: Literal["sequential", "shuffled"] = "sequential"
+    """Sampling mode. `sequential` iterates through the buffer in order, while `shuffled` draws uniform random indices each step."""
+    write_mode: Literal["fifo", "reservoir"] = "fifo"
+    """Buffer write mode. `fifo` behaves like a ring buffer, `reservoir` performs uniform replacement akin to reservoir sampling once the buffer is full."""
+
+    def __call__(self, inner: Source) -> Source:
+        return _BufferTransformSource(
+            inner=inner,
+            capacity=self.capacity,
+            prefill=self.prefill,
+            sample_size=self.sample_size,
+            mode=self.mode,
+            write_mode=self.write_mode,
+        )
+
+
 @jax.tree_util.register_pytree_node_class
 @dataclass
-class BufferState:
+class _BufferState:
     inner_state: Any
     buffer: PyTree
     count: jax.Array
@@ -249,46 +280,6 @@ class BufferState:
             read_index=read_index,
             seen=seen,
             rng=rng,
-        )
-
-
-@dataclass
-class BufferTransform:
-    """Cache streaming samples for later randomized replay.
-
-    This transform stores scalar samples emitted by ``inner`` and, once the
-    buffer is "prefilled", serves elements from the cache.
-    The elements can be consumed directly, or batching/minibatching can 
-    be handled by ``BatchTransform`` or similar
-    utilities placed after the buffer in the pipeline.
-
-    Args:
-        capacity: Maximum number of samples to store.
-        prefill: Number of valid samples to observe before consuming from
-            the buffer. Defaults to ``capacity`` so replay starts after the
-            cache is full.
-        sample_size: Number of buffered samples emitted per ``next`` call.
-        mode: ``"sequential"`` iterates through the buffer in order, while
-            ``"shuffled"`` draws uniform random indices each step.
-        write_mode: ``"fifo"`` behaves like a ring buffer, ``"reservoir"``
-            performs uniform replacement akin to reservoir sampling once the
-            buffer is full.
-    """
-
-    capacity: int
-    prefill: int 
-    sample_size: int = 1
-    mode: Literal["sequential", "shuffled"] = "sequential"
-    write_mode: Literal["fifo", "reservoir"] = "fifo"
-
-    def __call__(self, inner: Source) -> Source:
-        return _BufferTransformSource(
-            inner=inner,
-            capacity=self.capacity,
-            prefill=self.prefill,
-            sample_size=self.sample_size,
-            mode=self.mode,
-            write_mode=self.write_mode,
         )
 
 
@@ -357,12 +348,12 @@ class _BufferTransformSource(SourceTransform):
     def element_spec(self) -> PyTree:
         return self._element_spec
 
-    def init_state(self, key: jax.Array | None = None) -> BufferState:
+    def init_state(self, key: jax.Array | None = None) -> _BufferState:
         if key is None:
             key = jax.random.PRNGKey(0)
         inner_state = self.inner.init_state(key)
         rng = jax.random.fold_in(key, 1)
-        return BufferState(
+        return _BufferState(
             inner_state=inner_state,
             buffer=self._buffer_template,
             count=jnp.array(0, dtype=jnp.int32),
@@ -390,7 +381,7 @@ class _BufferTransformSource(SourceTransform):
             return mask[0]
         return mask
 
-    def next(self, state: BufferState):
+    def next(self, state: _BufferState):
         value, mask, inner_state = self.inner.next(state.inner_state)
         mask_scalar = jnp.all(jnp.asarray(mask, dtype=jnp.bool_))
 
@@ -492,7 +483,7 @@ class _BufferTransformSource(SourceTransform):
         formatted_chunk = self._format_chunk(chunk)
         formatted_mask = self._format_mask(mask_vec)
 
-        next_state = BufferState(
+        next_state = _BufferState(
             inner_state=inner_state,
             buffer=updated_buffer,
             count=new_count,
@@ -506,19 +497,14 @@ class _BufferTransformSource(SourceTransform):
 
 @dataclass
 class TimeSeriesBatchTransform:
-    """Reshape batched sequences for time-series models.
-
-    Args:
-        sequence_key: Key within the batch mapping that stores time-series tensors.
-        mode: Either ``"batched"`` for (B, T, F) outputs or ``"packed"`` for
-            flattened (B * T, F) representations.
-        sequence_start_key: Key used to store the "new sequence" flags when
-            ``mode="packed"`` is selected.
-    """
+    """Reshape batched sequences for time-series models."""
 
     sequence_key: str = "context"
+    """Key within the batch mapping that stores time-series tensors."""
     mode: Literal["batched", "packed"] = "batched"
+    """Either ``"batched"`` for (B, T, F) outputs or ``"packed"`` for flattened (B * T, F) representations."""
     sequence_start_key: str = "sequence_start"
+    """Key used to store the "new sequence" flags when ``mode="packed"`` is selected."""
 
     def __call__(self, inner: Source) -> Source:
         return _TimeSeriesBatchTransformSource(
@@ -615,6 +601,7 @@ class MapTransform:
     """Apply a pure function to the input for map-style transforms."""
 
     fn: Callable[[PyTree, jax.Array], PyTree]
+    """Function to apply to each batch. Receives (batch, mask) as arrays."""
 
     def __call__(self, inner: Source) -> Source:
         return _MapTransformSource(inner=inner, fn=self.fn)
@@ -622,8 +609,6 @@ class MapTransform:
 
 @dataclass
 class _MapTransformSource(SourceTransform):
-    """Apply a pure function to each batch emitted by the inner source."""
-
     inner: Source
     fn: Callable[[PyTree, jax.Array], PyTree]
 
@@ -646,12 +631,10 @@ class _MapTransformSource(SourceTransform):
 class HostCallbackTransform:
     """Invoke a host callback between jittable pipeline stages. Useful
     for logging or visualization.
-    
-    Args:
-        fn: Function to invoke on host. Receives (batch, mask) as arrays.
     """
 
     fn: Callable[[PyTree, jax.Array], PyTree | None]
+    """Function to invoke on host. Receives (batch, mask) as arrays."""
     element_spec_override: PyTree | None = None
 
     def __call__(self, inner: Source) -> Source:
@@ -664,8 +647,6 @@ class HostCallbackTransform:
 
 @dataclass
 class _HostCallbackTransformSource(SourceTransform):
-    """Invoke a host callback between jittable pipeline stages."""
-
     inner: Source
     fn: Callable[[PyTree, jax.Array], PyTree | None]
     element_spec_override: PyTree | None = None
@@ -723,12 +704,10 @@ class DevicePutTransform:
     """Move batches onto a target device.
     
     Use this to move your data onto accelerators (e.g., GPU/TPU) as part of the data pipeline.
-
-    Args:
-        device: Target device or device string (e.g., 'cpu', 'gpu:0', 'tpu:1'). If None, defaults to the default jax device.
     """
 
     device: jax.Device | str | None = None
+    """Target device or device string (e.g., 'cpu', 'gpu:0', 'tpu:1'). If None, defaults to the default jax device."""
 
     def __call__(self, inner: Source) -> Source:
         return _DevicePutTransformSource(inner=inner, device=self.device)
@@ -736,8 +715,6 @@ class DevicePutTransform:
 
 @dataclass
 class _DevicePutTransformSource(SourceTransform):
-    """Move batches emitted by `inner` onto a target device."""
-
     inner: Source
     device: jax.Device | str | None = None
 
@@ -788,18 +765,16 @@ def _require_spec_mapping(spec: PyTree, key: str) -> dict[str, jax.ShapeDtypeStr
 
 @dataclass
 class NormalizeImageTransform:
-    """Scale uint8 image tensors to [0, 1] (or custom range).
-    
-    Args:
-        data_key: Key in the batch mapping corresponding to image tensors.
-        dtype: Target dtype for normalized images.
-        scale: Scale factor applied to uint8 images.
-        offset: Offset added after scaling."""
+    """Scale uint8 image tensors to [0, 1] (or custom range)."""
 
     data_key: str = "image"
+    """Key in the batch mapping corresponding to image tensors."""
     dtype: jnp.dtype = jnp.float32
+    """Target dtype for normalized images."""
     scale: float = 1.0 / 255.0
+    """Scale factor applied to uint8 images."""
     offset: float = 0.0
+    """Offset added after scaling."""
 
     def __call__(self, inner: Source) -> Source:
         return _NormalizeImageTransformSource(
@@ -813,8 +788,6 @@ class NormalizeImageTransform:
 
 @dataclass
 class _NormalizeImageTransformSource(SourceTransform):
-    """Scale uint8 image tensors to [0, 1] (or custom range)."""
-
     inner: Source
     data_key: str = "image"
     dtype: jnp.dtype = jnp.float32
@@ -849,13 +822,12 @@ class _NormalizeImageTransformSource(SourceTransform):
 
 @dataclass
 class FlattenTransform:
-    """Flattens per-sample tensors.
-    
-    Args:
-        data_key: Key in the batch mapping corresponding to image tensors."""
+    """Flattens per-sample tensors."""
 
     data_key: str 
+    """Key in the batch mapping corresponding to tensors to be flattened."""
     start_index: int = 1
+    """Index at which to start flattening (default 0 flattens all dimensions)."""
 
     def __call__(self, inner: Source) -> Source:
         return _FlattenTransformSource(inner=inner, data_key=self.data_key, start_index=self.start_index)
@@ -863,13 +835,6 @@ class FlattenTransform:
 
 @dataclass
 class _FlattenTransformSource(SourceTransform):
-    """Flatten incoming tensors.
-    
-    Args:
-        data_key: Key in the batch mapping corresponding to image tensors.
-        start_index: Index at which to start flattening (default 0 flattens all dimensions).
-    """
-
     inner: Source
     data_key: str 
     start_index: int
