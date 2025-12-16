@@ -121,7 +121,7 @@ class _BatchTransformSource(SourceTransform):
     def element_spec(self) -> PyTree:
         return self._element_spec
 
-    def init_state(self, key: jax.Array | None = None) -> BatchTransformState:
+    def init_state(self, key: jax.Array) -> BatchTransformState:
         return BatchTransformState(
             inner_state=self.inner.init_state(key),
             position_in_epoch=jnp.array(0, dtype=jnp.int32),
@@ -345,9 +345,7 @@ class _BufferTransformSource(SourceTransform):
     def element_spec(self) -> PyTree:
         return self._element_spec
 
-    def init_state(self, key: jax.Array | None = None) -> BufferState:
-        if key is None:
-            key = jax.random.PRNGKey(0)
+    def init_state(self, key: jax.Array) -> BufferState:
         inner_state = self.inner.init_state(key)
         rng = jax.random.fold_in(key, 1)
         return BufferState(
