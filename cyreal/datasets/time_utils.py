@@ -30,14 +30,13 @@ def load_value_column(path, *, skip_header: int, value_column: int) -> np.ndarra
 
 
 def select_split(
-    values: np.ndarray,
-    *,
+    array: np.ndarray,
     split: Literal["train", "val", "test"],
     train_fraction: float,
-    val_fraction: float = 0.0,
     context_length: int,
+    val_fraction: float = 0.0,
 ) -> np.ndarray:
-    """Slice a time-aligned array into train/val/test, with history overlap for non-train splits.
+    """Slice time-aligned arrays into train/val/test, with history overlap for non-train splits.
 
     This helper is designed for *time-series windowing* workflows where your model
     needs a fixed-length history (``context_length``) to make the first prediction in
@@ -64,9 +63,9 @@ def select_split(
     - If you have separate time-aligned arrays (e.g. inputs ``x`` and labels ``y``),
       apply this same slicing policy to both (same parameters) so they stay aligned.
     """
-    n = int(len(values))
+    n = int(len(array))
     if n <= 0:
-        raise ValueError("values must be non-empty.")
+        raise ValueError("Array must be non-empty.")
     if not 0.0 < train_fraction < 1.0:
         raise ValueError("train_fraction must be in (0, 1).")
     if not 0.0 <= val_fraction < 1.0:
@@ -94,47 +93,68 @@ def select_split(
         overlap = max(context_length, 1)
         start = max(start - overlap, 0)
 
-    return values[start:end]
+    return array[start:end]
 
 
-def sliding_window_series(
-    series: np.ndarray,
-    *,
-    overlapping: bool,
-    context_length: int,
-    prediction_length: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Prepare sliding windows from a time series.
+def sliding_window_many(
+    array: np.ndarray,
+    window_size: int,
+    stride: int = 1,
+    offset: int = 0,
+) -> np.ndarray:
+    """Create aligned sliding windows for an array.
 
-    If prediction_length is 0, then the series is returned as is.
+    The core slice is:
 
-    Args:
-        series: The time series to prepare windows from.
-        overlapping: Whether the context and target windows should overlap. Useful for training neural CDE models.
-        context_length: The length of the context window.
-        prediction_length: The length of the prediction window.
+        a[s + offset : s + offset + window_size]
+
+    Diagram 1: disjoint context/target windows (common forecasting setup)
+
+        series:  [0 1 2 3 4 5 6 7 8 9 ...]
+
+        context_length = 4
+        prediction_length = 3
+
+        for start s = 0:
+          context offset=0, window_size=4:     [0 1 2 3]
+          target  offset=4, window_size=3:             [4 5 6]
+
+        for start s = 1:
+          context:                                [1 2 3 4]
+          target:                                         [5 6 7]
+
+    Diagram 2: target is a prefix-extended window (seq-to-seq style)
+
+        context_length = 4
+        target_window_size = 7
+        offset = 0
+
+        context: [0 1 2 3]
+        target:  [0 1 2 3 4 5 6]
+
+    This is the generic building block for:
+    - context-only windows: ``sliding_window_many(x, window_size=context_length)``
+    - future-only targets: ``sliding_window_many(x, window_size=prediction_length, offset=context_length)``
+    - separate inputs/labels: ``sliding_window_many(x, y, window_size=..., offset=...)``
     """
-    if context_length <= 0 or prediction_length <= 0:
-        raise ValueError("context_length and prediction_length must be positive.")
-    total = len(series) - (context_length + prediction_length) + 1
-    if total <= 0:
-        raise ValueError("Series too short for requested window configuration (context + prediction).")
-    contexts = []
-    targets = []
-    if overlapping:
-        for i in range(total):
-            ctx = series[i : i + context_length]
-            tgt = series[i : i + context_length + prediction_length]
-            contexts.append(ctx)
-            targets.append(tgt)
-    else:
-        for i in range(total):
-            ctx = series[i : i + context_length]
-            tgt = series[i + context_length : i + context_length + prediction_length]
-            contexts.append(ctx)
-            targets.append(tgt)
+    if window_size <= 0:
+        raise ValueError("window_size must be positive.")
+    if stride <= 0:
+        raise ValueError("stride must be positive.")
+    if offset < 0:
+        raise ValueError("offset must be >= 0.")
 
-    return np.stack(contexts, axis=0), np.stack(targets, axis=0)
+    t = int(len(array))
+    if t <= 0:
+        raise ValueError("Array must be non-empty.")
+
+    total = t - (offset + window_size) + 1
+    if total <= 0:
+        raise ValueError("Series too short for requested window_size/offset.")
+    starts = np.arange(0, total, stride, dtype=np.int64)
+
+    windows = [array[s + offset : s + offset + window_size] for s in starts]
+    return np.array(windows)
 
 
 def load_time_series_from_csv(
@@ -153,29 +173,176 @@ def load_time_series_from_csv(
     return values
 
 
-def prepare_time_windows(
-    values: np.ndarray,
+def prepare_time_series_windows(
+    series: np.ndarray,
     split: Literal["train", "val", "test"],
-    *,
-    overlapping: bool,
     context_length: int,
     prediction_length: int,
     train_fraction: float,
     val_fraction: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Prepare time windows for a time series array.
+
+    This returns aligned windows built from the (possibly overlap-extended) split slice
+    produced by :func:`select_split`.
+
+    Diagram: context/target windowing (forecasting)
+
+        series:  [0 1 2 3 4 5 6 7 8 9 ...]
+
+        context_length = 4
+        prediction_length = 3
+
+        for start s = 0:
+          context: [0 1 2 3]
+          target:          [4 5 6]
+
+        for start s = 1:
+          context:   [1 2 3 4]
+          target:             [5 6 7]
+
+    Args:
+        array: The time series array.
+        split: The split to prepare windows for.
+        context_length: The length of the context window.
+        prediction_length: The length of the prediction window.
+        train_fraction: The fraction of the data to use for training.
+        val_fraction: The fraction of the data to use for validation.
+
+    Returns:
+        A tuple of context and target arrays.
+    """
     split_values = select_split(
-        values,
+        series,
         split=split,
         train_fraction=train_fraction,
         val_fraction=val_fraction,
         context_length=context_length,
     )
-    contexts, targets = sliding_window_series(
+    contexts = sliding_window_many(
         split_values,
-        overlapping=overlapping,
-        context_length=context_length,
-        prediction_length=prediction_length,
+        window_size=context_length,
     )
+    targets = sliding_window_many(
+        split_values,
+        window_size=prediction_length,
+        offset=context_length,
+    )
+    # Align counts: `targets` needs `context_length + prediction_length` points, so it
+    # is always the limiting factor. `contexts` may contain extra suffix windows that
+    # cannot be paired with a future target.
+    contexts = contexts[: targets.shape[0]]
+    return contexts.astype(np.float32), targets.astype(np.float32)
+
+
+def prepare_seq_to_seq_windows(
+    input_sequence: np.ndarray,
+    target_sequence: np.ndarray,
+    split: Literal["train", "val", "test"],
+    input_window_len: int,
+    target_window_len: int,
+    target_offset: int = 0,
+    train_fraction: float = 0.8,
+    val_fraction: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Prepare aligned context/target windows from two time-aligned sequences.
+
+    This is the multi-array version of :func:`prepare_time_series_windows`:
+    it first slices *both* sequences with :func:`select_split` (including overlap for
+    non-train splits), then creates forecasting-style windows where each target window
+    starts immediately after its corresponding context window.
+
+    Diagram 1: Standard seq-to-seq style
+
+        series:  [0 1 2 3 4 5 6 7 8 9 ...]
+
+        input_window_len = 4
+        target_window_len = 4
+        target_offset = 0
+
+        for start s = 0:
+          context: [0 1 2 3]
+          target:  [0 1 2 3]
+
+        for start s = 1:
+          context:   [1 2 3 4]
+          target:    [1 2 3 4]
+
+    Diagram 2: Dynamics-conditioned forecasting style
+
+        series:  [0 1 2 3 4 5 6 7 8 9 ...]
+
+        input_window_len = 4
+        target_window_len = 6
+        target_offset = 0
+
+        for start s = 0:
+          context: [0 1 2 3]
+          target:  [0 1 2 3 4 5]
+
+        for start s = 1:
+          context:   [1 2 3 4]
+          target:    [1 2 3 4 5 6]
+
+    Diagram 3: Pure forecasting style (uncommon)
+
+        series:  [0 1 2 3 4 5 6 7 8 9 ...]
+
+        input_window_len = 4
+        target_window_len = 4
+        target_offset = input_window_len
+
+        for start s = 0:
+          context: [0 1 2 3]
+          target:          [4 5 6 7]
+
+        for start s = 1:
+          context:   [1 2 3 4]
+          target:            [5 6 7 8]
+
+    Args:
+        input_sequence: The time-aligned input sequence (e.g. features).
+        target_sequence: The time-aligned target sequence (e.g. labels).
+        split: The split to prepare windows for.
+        input_window_len: The length of the input window.
+        target_window_len: The length of the target window.
+        train_fraction: The fraction of the data to use for training.
+        val_fraction: The fraction of the data to use for validation.
+
+    Returns:
+        A tuple of context and target arrays.
+    """
+    if not len(input_sequence) == len(target_sequence):
+        raise ValueError("All sequences must have the same length.")
+    split_inputs = select_split(
+        input_sequence,
+        split=split,
+        train_fraction=train_fraction,
+        val_fraction=val_fraction,
+        context_length=input_window_len,
+    )
+    split_targets = select_split(
+        target_sequence,
+        split=split,
+        train_fraction=train_fraction,
+        val_fraction=val_fraction,
+        context_length=input_window_len,
+    )
+
+    contexts = sliding_window_many(
+        split_inputs,
+        window_size=input_window_len,
+    )
+    targets = sliding_window_many(
+        split_targets,
+        window_size=target_window_len,
+        offset=target_offset,
+    )
+
+    # Align the number of windows. `targets` is the limiting factor because it needs
+    # `context_length + prediction_length` points; `contexts` may contain extra suffix
+    # windows that cannot be paired with a future target.
+    contexts = contexts[: targets.shape[0]]
     return contexts.astype(np.float32), targets.astype(np.float32)
 
 
@@ -229,7 +396,7 @@ def make_sequence_disk_source(
 __all__ = [
     "load_value_column",
     "select_split",
-    "sliding_window_series",
-    "prepare_time_windows",
+    "sliding_window_many",
+    "prepare_seq_to_seq_windows",
     "make_sequence_disk_source",
 ]

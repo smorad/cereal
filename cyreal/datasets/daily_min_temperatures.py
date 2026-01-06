@@ -9,7 +9,7 @@ import jax
 
 from .dataset_protocol import DatasetProtocol
 from ..sources import DiskSource
-from .time_utils import load_time_series_from_csv, make_sequence_disk_source, prepare_time_windows
+from .time_utils import load_time_series_from_csv, prepare_time_series_windows, make_sequence_disk_source
 from .utils import to_host_jax_array as _to_host_jax_array
 
 DAILY_MIN_TEMPS_URL = "https://raw.githubusercontent.com/jbrownlee/Datasets/master/daily-min-temperatures.csv"
@@ -38,10 +38,9 @@ class DailyMinTemperaturesDataset(DatasetProtocol):
             skip_header=1,
             value_column=1,
         )
-        contexts, targets = prepare_time_windows(
-            values=values,
+        contexts, targets = prepare_time_series_windows(
+            series=values,
             split=self.split,
-            overlapping=self.overlapping,
             context_length=self.context_length,
             prediction_length=self.prediction_length,
             train_fraction=self.train_fraction,
@@ -88,10 +87,9 @@ class DailyMinTemperaturesDataset(DatasetProtocol):
             skip_header=1,
             value_column=1,
         )
-        contexts, targets = prepare_time_windows(
-            values=values,
+        contexts, targets = prepare_time_series_windows(
+            series=values,
             split=split,
-            overlapping=cls.overlapping,
             context_length=context_length,
             prediction_length=prediction_length,
             train_fraction=train_fraction,
