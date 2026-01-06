@@ -72,6 +72,8 @@ def select_split(
         raise ValueError("val_fraction must be in [0, 1).")
     if train_fraction + val_fraction >= 1.0:
         raise ValueError("train_fraction + val_fraction must be < 1.")
+    if context_length < 0:
+        raise ValueError("context_length must be >= 0.")
 
     train_end = min(max(int(n * train_fraction), 1), n)
 
@@ -90,7 +92,7 @@ def select_split(
         start, end = val_end, n
 
     if split != "train":
-        overlap = max(context_length, 1)
+        overlap = context_length
         start = max(start - overlap, 0)
 
     return array[start:end]
@@ -135,7 +137,7 @@ def sliding_window_many(
     This is the generic building block for:
     - context-only windows: ``sliding_window_many(x, window_size=context_length)``
     - future-only targets: ``sliding_window_many(x, window_size=prediction_length, offset=context_length)``
-    - separate inputs/labels: ``sliding_window_many(x, y, window_size=..., offset=...)``
+    - separate inputs/labels: call it separately on each aligned array with the same parameters.
     """
     if window_size <= 0:
         raise ValueError("window_size must be positive.")
@@ -369,8 +371,12 @@ def make_sequence_disk_source(
     contexts_np = np.array(contexts, copy=True)
     targets_np = np.array(targets, copy=True)
 
-    context_length = int(contexts_np.shape[1])
-    prediction_length = int(targets_np.shape[1])
+    if contexts_np.ndim < 2:
+        raise ValueError("contexts must have shape (N, context_len, ...).")
+    if targets_np.ndim < 2:
+        raise ValueError("targets must have shape (N, target_len, ...).")
+    context_sample_shape = tuple(int(x) for x in contexts_np.shape[1:])
+    target_sample_shape = tuple(int(x) for x in targets_np.shape[1:])
 
     def _read_sample(index: int | np.ndarray) -> dict[str, np.ndarray]:
         idx = int(np.asarray(index))
@@ -380,8 +386,8 @@ def make_sequence_disk_source(
         }
 
     sample_spec = {
-        "context": jax.ShapeDtypeStruct(shape=(context_length,), dtype=jnp.float32),
-        "target": jax.ShapeDtypeStruct(shape=(prediction_length,), dtype=jnp.float32),
+        "context": jax.ShapeDtypeStruct(shape=context_sample_shape, dtype=jnp.float32),
+        "target": jax.ShapeDtypeStruct(shape=target_sample_shape, dtype=jnp.float32),
     }
 
     return DiskSource(
@@ -397,6 +403,8 @@ __all__ = [
     "load_value_column",
     "select_split",
     "sliding_window_many",
+    "load_time_series_from_csv",
+    "prepare_time_series_windows",
     "prepare_seq_to_seq_windows",
     "make_sequence_disk_source",
 ]
