@@ -9,7 +9,7 @@ import jax
 
 from .dataset_protocol import DatasetProtocol
 from ..sources import DiskSource
-from .time_utils import make_sequence_disk_source, prepare_time_windows
+from .time_utils import load_time_series_from_csv, make_sequence_disk_source, prepare_time_windows
 from .utils import to_host_jax_array as _to_host_jax_array
 
 DAILY_MIN_TEMPS_URL = "https://raw.githubusercontent.com/jbrownlee/Datasets/master/daily-min-temperatures.csv"
@@ -28,19 +28,22 @@ class DailyMinTemperaturesDataset(DatasetProtocol):
     data_path: str | None = None
 
     def __post_init__(self) -> None:
-        contexts, targets = prepare_time_windows(
+        values = load_time_series_from_csv(
+            cache_dir=self.cache_dir,
             dataset_name="daily_min_temperatures",
             filename="daily-min-temperatures.csv",
             url=DAILY_MIN_TEMPS_URL,
+            data_path=self.data_path,
             skip_header=1,
             value_column=1,
+        )
+        contexts, targets = prepare_time_windows(
+            values=values,
             split=self.split,
             overlapping=self.overlapping,
             context_length=self.context_length,
             prediction_length=self.prediction_length,
             train_fraction=self.train_fraction,
-            cache_dir=self.cache_dir,
-            data_path=self.data_path,
         )
         self._contexts = _to_host_jax_array(contexts)
         self._targets = _to_host_jax_array(targets)
@@ -73,19 +76,22 @@ class DailyMinTemperaturesDataset(DatasetProtocol):
     ) -> DiskSource:
         """Return the dataset in a disk streaming format."""
 
-        contexts, targets = prepare_time_windows(
+        values = load_time_series_from_csv(
+            cache_dir=cache_dir,
             dataset_name="daily_min_temperatures",
             filename="daily-min-temperatures.csv",
             url=DAILY_MIN_TEMPS_URL,
+            data_path=data_path,
             skip_header=1,
             value_column=1,
+        )
+        contexts, targets = prepare_time_windows(
+            values=values,
             split=split,
-            overlapping=False,
+            overlapping=cls.overlapping,
             context_length=context_length,
             prediction_length=prediction_length,
             train_fraction=train_fraction,
-            cache_dir=cache_dir,
-            data_path=data_path,
         )
         return make_sequence_disk_source(
             contexts=contexts,

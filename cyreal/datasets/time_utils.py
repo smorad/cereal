@@ -66,9 +66,7 @@ def sliding_window_series(
         raise ValueError("context_length and prediction_length must be positive.")
     total = len(series) - (context_length + prediction_length) + 1
     if total <= 0:
-        raise ValueError(
-            "Series too short for requested window configuration (context + prediction)."
-        )
+        raise ValueError("Series too short for requested window configuration (context + prediction).")
     contexts = []
     targets = []
     if overlapping:
@@ -87,26 +85,31 @@ def sliding_window_series(
     return np.stack(contexts, axis=0), np.stack(targets, axis=0)
 
 
-def prepare_time_windows(
+def load_time_series_from_csv(
     *,
+    cache_dir: str | None,
     dataset_name: str,
     filename: str,
     url: str,
-    value_column: int,
+    data_path: str | None,
     skip_header: int,
+    value_column: int,
+) -> np.ndarray:
+    base_dir = resolve_cache_dir(cache_dir, default_name=f"cyreal_{dataset_name}")
+    csv_path = ensure_csv(base_dir, filename, url, data_path)
+    values = load_value_column(csv_path, skip_header=skip_header, value_column=value_column)
+    return values
+
+
+def prepare_time_windows(
+    values: np.ndarray,
     split: Literal["train", "test"],
+    *,
     overlapping: bool,
     context_length: int,
     prediction_length: int,
     train_fraction: float,
-    cache_dir: str | None,
-    data_path: str | None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    base_dir = resolve_cache_dir(cache_dir, default_name=f"cyreal_{dataset_name}")
-    csv_path = ensure_csv(base_dir, filename, url, data_path)
-    values = load_value_column(
-        csv_path, skip_header=skip_header, value_column=value_column
-    )
     split_values = select_split(
         values,
         split=split,
