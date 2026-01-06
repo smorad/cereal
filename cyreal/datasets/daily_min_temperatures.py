@@ -19,11 +19,12 @@ DAILY_MIN_TEMPS_URL = "https://raw.githubusercontent.com/jbrownlee/Datasets/mast
 class DailyMinTemperaturesDataset(DatasetProtocol):
     """A time series regression dataset of daily minimum temperatures from the Bureau of Meteorology."""
 
-    split: Literal["train", "test"] = "train"
+    split: Literal["train", "val", "test"] = "train"
     overlapping: bool = False
     context_length: int = 30
     prediction_length: int = 1
     train_fraction: float = 0.8
+    val_fraction: float = 0.0
     cache_dir: str | None = None
     data_path: str | None = None
 
@@ -44,6 +45,7 @@ class DailyMinTemperaturesDataset(DatasetProtocol):
             context_length=self.context_length,
             prediction_length=self.prediction_length,
             train_fraction=self.train_fraction,
+            val_fraction=self.val_fraction,
         )
         self._contexts = _to_host_jax_array(contexts)
         self._targets = _to_host_jax_array(targets)
@@ -65,10 +67,11 @@ class DailyMinTemperaturesDataset(DatasetProtocol):
     def make_disk_source(
         cls,
         *,
-        split: Literal["train", "test"] = "train",
+        split: Literal["train", "val", "test"] = "train",
         context_length: int = 30,
         prediction_length: int = 1,
         train_fraction: float = 0.8,
+        val_fraction: float = 0.0,
         cache_dir: str | None = None,
         data_path: str | None = None,
         ordering: Literal["sequential", "shuffle"] = "shuffle",
@@ -92,6 +95,7 @@ class DailyMinTemperaturesDataset(DatasetProtocol):
             context_length=context_length,
             prediction_length=prediction_length,
             train_fraction=train_fraction,
+            val_fraction=val_fraction,
         )
         return make_sequence_disk_source(
             contexts=contexts,

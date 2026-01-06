@@ -32,18 +32,36 @@ def load_value_column(path, *, skip_header: int, value_column: int) -> np.ndarra
 def select_split(
     values: np.ndarray,
     *,
-    split: Literal["train", "test"],
+    split: Literal["train", "val", "test"],
     train_fraction: float,
+    val_fraction: float = 0.0,
     context_length: int,
 ) -> np.ndarray:
     if not 0 < train_fraction < 1:
         raise ValueError("train_fraction must be between 0 and 1.")
+    if not 0.0 <= val_fraction < 1:
+        raise ValueError("val_fraction must be between 0 (inclusive) and 1 (exclusive).")
+    if train_fraction + val_fraction >= 1:
+        raise ValueError("train_fraction + val_fraction must be < 1.")
     train_len = max(int(len(values) * train_fraction), 1)
     train_len = min(train_len, len(values))
+
+    if split == "val" and val_fraction == 0.0:
+        raise ValueError("val_fraction must be > 0 when split='val'.")
+
+    if val_fraction > 0.0:
+        val_end = max(int(len(values) * (train_fraction + val_fraction)), train_len + 1)
+        val_end = min(val_end, len(values))
+    else:
+        val_end = train_len
+
     if split == "train":
         return values[:train_len]
     overlap = max(context_length, 1)
-    start = max(train_len - overlap, 0)
+    if split == "val":
+        start = max(train_len - overlap, 0)
+        return values[start:val_end]
+    start = max(val_end - overlap, 0)
     return values[start:]
 
 
@@ -55,6 +73,8 @@ def sliding_window_series(
     prediction_length: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Prepare sliding windows from a time series.
+
+    If prediction_length is 0, then the series is returned as is.
 
     Args:
         series: The time series to prepare windows from.
@@ -103,17 +123,19 @@ def load_time_series_from_csv(
 
 def prepare_time_windows(
     values: np.ndarray,
-    split: Literal["train", "test"],
+    split: Literal["train", "val", "test"],
     *,
     overlapping: bool,
     context_length: int,
     prediction_length: int,
     train_fraction: float,
+    val_fraction: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     split_values = select_split(
         values,
         split=split,
         train_fraction=train_fraction,
+        val_fraction=val_fraction,
         context_length=context_length,
     )
     contexts, targets = sliding_window_series(

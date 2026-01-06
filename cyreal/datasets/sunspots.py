@@ -19,11 +19,12 @@ SUNSPOTS_URL = "https://raw.githubusercontent.com/jbrownlee/Datasets/master/mont
 class SunspotsDataset(DatasetProtocol):
     """A time series classification dataset of sunspot counts from SILSO."""
 
-    split: Literal["train", "test"] = "train"
+    split: Literal["train", "val", "test"] = "train"
     overlapping: bool = False
     context_length: int = 24
     prediction_length: int = 1
     train_fraction: float = 0.8
+    val_fraction: float = 0.0
     cache_dir: str | None = None
     data_path: str | None = None
 
@@ -44,6 +45,7 @@ class SunspotsDataset(DatasetProtocol):
             context_length=self.context_length,
             prediction_length=self.prediction_length,
             train_fraction=self.train_fraction,
+            val_fraction=self.val_fraction,
         )
         self._contexts = _to_host_jax_array(contexts)
         self._targets = _to_host_jax_array(targets)
@@ -65,10 +67,11 @@ class SunspotsDataset(DatasetProtocol):
     def make_disk_source(
         cls,
         *,
-        split: Literal["train", "test"] = "train",
+        split: Literal["train", "val", "test"] = "train",
         context_length: int = 24,
         prediction_length: int = 1,
         train_fraction: float = 0.8,
+        val_fraction: float = 0.0,
         cache_dir: str | None = None,
         data_path: str | None = None,
         ordering: Literal["sequential", "shuffle"] = "shuffle",
@@ -92,6 +95,7 @@ class SunspotsDataset(DatasetProtocol):
             context_length=context_length,
             prediction_length=prediction_length,
             train_fraction=train_fraction,
+            val_fraction=val_fraction,
         )
         return make_sequence_disk_source(
             contexts=contexts,
