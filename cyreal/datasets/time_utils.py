@@ -153,10 +153,15 @@ def sliding_window_many(
     total = t - (offset + window_size) + 1
     if total <= 0:
         raise ValueError("Series too short for requested window_size/offset.")
-    starts = np.arange(0, total, stride, dtype=np.int64)
+    # shape: (t - window_size + 1, window_size, ...)
+    all_windows = np.lib.stride_tricks.sliding_window_view(
+        array,
+        window_shape=window_size,
+        axis=0,
+    )
 
-    windows = [array[s + offset : s + offset + window_size] for s in starts]
-    return np.array(windows)
+    # pick starts: offset + [0, stride, 2*stride, ...]
+    return all_windows[offset : offset + total : stride]
 
 
 def load_time_series_from_csv(
@@ -234,7 +239,7 @@ def prepare_time_series_windows(
     # is always the limiting factor. `contexts` may contain extra suffix windows that
     # cannot be paired with a future target.
     contexts = contexts[: targets.shape[0]]
-    return contexts.astype(np.float32), targets.astype(np.float32)
+    return contexts, targets
 
 
 def prepare_seq_to_seq_windows(
@@ -345,7 +350,7 @@ def prepare_seq_to_seq_windows(
     # `context_length + prediction_length` points; `contexts` may contain extra suffix
     # windows that cannot be paired with a future target.
     contexts = contexts[: targets.shape[0]]
-    return contexts.astype(np.float32), targets.astype(np.float32)
+    return contexts, targets
 
 
 def make_sequence_disk_source(
